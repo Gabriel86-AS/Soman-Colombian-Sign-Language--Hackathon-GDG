@@ -8,14 +8,21 @@ Reads only the zip directory and the entries you ask for. The URL is requested
 fresh on every read, so signed redirects that expire (Figshare, ~10 s) still work.
 """
 import io
+import time
 import urllib.request
 
 UA = {"User-Agent": "Mozilla/5.0"}  # Mendeley returns 403 without it
 
 
-def _get(url, start, end):
+def _get(url, start, end, tries=6):
     req = urllib.request.Request(url, headers={**UA, "Range": f"bytes={start}-{end}"})
-    return urllib.request.urlopen(req, timeout=60)
+    for i in range(tries):
+        try:
+            return urllib.request.urlopen(req, timeout=60)
+        except OSError:  # URLError, timeouts, SSL handshake
+            if i == tries - 1:
+                raise
+            time.sleep(2 * (i + 1))
 
 
 class RemoteFile(io.RawIOBase):
