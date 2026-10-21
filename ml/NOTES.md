@@ -7,7 +7,7 @@
 
 Manifest (2026-10-21): 17,102 rows = lsc70 15,504 + lsc50 370 + lsc54 1,228.
 
-## Checks by eye (pending)
-- [ ] LSC50 middle field is the person? (watch 0030_* per id)
-- [ ] LSC-54 Chao == LSC50 ADIOS (0031)?
-- [ ] LSC70 frames _0.._5 in time order?
+## Checks by eye (done 2026-10-21, user confirmed "everything checks out")
+- [x] LSC50 middle field = person (5 different people per HOLA); last field = rep.
+- [x] LSC-54 Chao == LSC50 ADIOS (0031): same sign, they merge.
+- [x] LSC70 frames _0.._5 are in time order.
