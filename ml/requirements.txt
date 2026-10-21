@@ -1,0 +1,6 @@
+mediapipe
+pyarrow
+numpy
+pandas
+scikit-learn
+opencv-python-headless
