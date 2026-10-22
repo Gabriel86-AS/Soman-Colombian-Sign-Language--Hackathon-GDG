@@ -25,3 +25,14 @@ Extraction ran 2026-10-21 on the Colab VM: 4,182 clips (lsc70 2,584 · lsc54 1,2
 - Gotcha: a `SOMAN_OUT` set in the notebook kernel is inherited by `Popen` children. The full run therefore wrote to `/content/frames_test`, then was copied to Drive.
 - Gotcha: never block the colab-mcp kernel with a wait loop; poll with short cells instead.
 - Still open: contact sheets looked at by eye; 20-clip LSC50 Holistic cross-check.
+
+# Notes (phase 3)
+
+Built 2026-10-21 (`normalize.py`, `sequences.py`, `build_features.py`, `tests/`; 4 tests pass). Outputs in Drive `soman-ml/features/`.
+
+- `letters.npz`: 6,951 frames after the frame filter (8,313 before; 1,362 dropped = 16%, per the 2x-median rule). 334-361 frames per letter, 70 signers. 8 outliers flagged (4 std), not dropped, still to look at.
+- `sequences_words.npz` (T=30, X [1562,30,42], plus X2 for the second hand and locB for variant B) and `sequences_moving.npz` (T=12, 406 of 420 clips). Words file includes impostors (`imp_*`) and all LSC-54 words. Two files instead of one because T differs.
+- Idle threshold: 1.51 palm units/s = 3x median wrist speed in the first/last 10% of LSC50 MVP frames (a 95th percentile gave 15.8, which is hands entering the frame, not rest). `features/idle_thr.json`. Moving letters (6 frames) are not trimmed.
+- Two-handed (data-driven, second hand >40% of dominant path in most clips) among MVP words: BUENOS_DIAS, BUENAS_TARDES, BUENAS_NOCHES, GRACIAS. HOLA, ADIOS, BIEN, POR_FAVOR are one-handed. Lists in `features/two_handed_words.json`. Check by eye on the contact sheets.
+- Front-camera mirroring: contract step 2 (mirror by handshedness label) makes it irrelevant for handshape; Phase 4 golden test must prove it on a phone-mirrored frame.
+- Gotcha: `SOMAN_OUT` must point at the frames dir that actually holds the parts (`/content/frames_test` on the current VM; Drive copy is the same).
