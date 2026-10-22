@@ -77,7 +77,7 @@ def fit_scaled(model, Xtr, ytr, aug=True):
         Xtr = Xa
     sc = StandardScaler().fit(Xtr)
     model.fit(sc.transform(Xtr), ytr)
-    model.classes_ = cls[model.classes_]
+    model.str_classes_ = cls[model.classes_]
     return sc, model
 
 
@@ -88,10 +88,10 @@ def cv(X, y, groups, make, aug):
         sc, m = fit_scaled(make(), X[tr], y[tr], aug)
         p = m.predict_proba(sc.transform(X[te]))
         if probs is None:
-            probs = np.zeros((len(y), len(m.classes_)))
-            classes = m.classes_
+            probs = np.zeros((len(y), len(m.str_classes_)))
+            classes = m.str_classes_
         probs[te] = p
-        oof[te] = m.classes_[p.argmax(1)]
+        oof[te] = m.str_classes_[p.argmax(1)]
     return oof, probs, classes
 
 
@@ -189,9 +189,9 @@ def main():
     report += ["", f"Threshold tau = {tau:.3f} (<= 5% of none frames above it; floor 0.70). holdFrames = 8."]
 
     sc, m = fit_scaled(make_mlp(), Xf, yf, True)
-    labels = list(m.classes_)
+    labels = list(m.str_classes_)
     labels = ["none"] + [l for l in labels if l != "none"]
-    order = [list(m.classes_).index(l) for l in labels]
+    order = [list(m.str_classes_).index(l) for l in labels]
     Wout = m.coefs_[-1][:, order]
     bout = m.intercepts_[-1][order]
     layers = [dict(W=m.coefs_[i].T.tolist(), b=m.intercepts_[i].tolist(), act="relu") for i in range(len(m.coefs_) - 1)]
