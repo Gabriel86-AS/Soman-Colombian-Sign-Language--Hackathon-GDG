@@ -1,6 +1,6 @@
 """Phase 5: kNN-DTW word recognition. Evaluate (signer-held-out), pick thresholds, export templates.
 
-    python words_dtw.py eval          # variants A, B, A2 + cross-dataset  -> FEATS/words_eval.json
+    python words_dtw.py eval          # variants A, B, C + cross-dataset  -> FEATS/words_eval.json
     python words_dtw.py export A      # templates, thresholds, golden for the chosen variant -> ml/out/
 
 Env: SOMAN_FEATS (features dir, has sequences_words.npz, two_handed_words.json).
@@ -16,23 +16,35 @@ import dtw as D
 FEATS = os.environ.get("SOMAN_FEATS", "/content/drive/MyDrive/soman-ml/features")
 OUTDIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out")
 WORDS = ["GRACIAS", "BUENOS_DIAS", "BUENAS_TARDES", "BUENAS_NOCHES", "BIEN", "HOLA", "ADIOS", "POR_FAVOR"]
-K, N_TEMPL, BAND_FRAC, T = 5, 20, 0.10, 30
+K, N_TEMPL, BAND_FRAC, T = 5, 40, 0.10, 30
 BAND = max(1, round(BAND_FRAC * T))
-FEATURE_VERSION = "v1"
+FEATURE_VERSION = "v2"
 SOURCE = {"lsc50": "LSC50", "lsc54": "LSC-54", "team": "team"}
+
+
+def layout(variant):
+    """[(feature, source array, weight)] per variant; weights are part of the feature contract."""
+    if variant == "A":
+        return [("shape", "X[:, :40]", 1.0), ("locA", "X[:, 40:]", 1.0)]
+    if variant == "B":
+        return [("shape", "X[:, :40]", 1.0), ("locB", "locB", 3.0)]
+    if variant == "C":
+        return [("shape", "X[:, :40]", 1.0), ("locB", "locB", 3.0), ("locN", "locN", 3.0),
+                ("shape2", "X2[:, :40]", 0.3), ("locB2", "locB2", 3.0)]
+    raise ValueError(variant)
 
 
 def load(variant):
     z = np.load(f"{FEATS}/sequences_words.npz", allow_pickle=True)
-    X = z["X"].astype(np.float64)
-    if variant == "A":
-        F = X
-    elif variant == "A2":
-        F = np.concatenate([X, z["X2"][:, :, :40]], 2)
-    elif variant == "B":
-        F = np.concatenate([X[:, :, :40], z["locB"]], 2)
-    else:
-        raise ValueError(variant)
+    src = dict(X=z["X"], X2=z["X2"], locB=z["locB"], locN=z["locN"], locB2=z["locB2"])
+    parts = []
+    for _, expr, wgt in layout(variant):
+        name, _, sl = expr.partition("[")
+        a = src[name].astype(np.float64)
+        if sl:
+            a = a[:, :, 40:] if sl.startswith(":, 40:") else a[:, :, :40]
+        parts.append(wgt * a)
+    F = np.concatenate(parts, 2)
     ok = ~np.isnan(F).any((1, 2))
     meta = dict(label=z["label"].astype(str), ds=z["dataset"].astype(str), sid=z["sample_id"].astype(str),
                 signer=np.array([f"{d}_{s}" for d, s in zip(z["dataset"], z["signer"])]))
@@ -168,7 +180,7 @@ def cross(variant, thr):
 
 def evaluate():
     report = {}
-    for v in ("A", "B", "A2"):
+    for v in ("A", "B", "C"):
         S, m, keep = oof(v)
         lab = m["label"]
         thr, pct, fa = thresholds(S, lab, keep)
@@ -197,8 +209,8 @@ def export(variant):
     for w in WORDS:
         ti = tidx[lab[tidx] == w]
         json.dump(dict(word=w, feature_version=FEATURE_VERSION, variant=variant, T=T, dim=int(F.shape[2]),
-                       band=BAND, k=K, threshold=round(thr[w], 5), two_handed=w in two,
-                       templates=[dict(source=SOURCE[ds[i]], X=np.round(F[i], 5).tolist()) for i in ti]),
+                       band=BAND, k=K, layout=[[n, wg] for n, _, wg in layout(variant)], threshold=round(thr[w], 5), two_handed=w in two,
+                       templates=[dict(source=SOURCE[ds[i]], X=np.round(F[i], 4).tolist()) for i in ti]),
                   open(f"{OUTDIR}/templates/{w}.json", "w"), separators=(",", ":"))
     # golden: queries (2 per word + 4 impostors) and their class scores against the exported templates
     rng = np.random.default_rng(0)
