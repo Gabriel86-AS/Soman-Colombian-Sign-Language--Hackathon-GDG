@@ -1,0 +1,117 @@
+{
+ "variant": "C",
+ "thresholds": {
+  "GRACIAS": 3.5255477508184563,
+  "BUENOS_DIAS": 5.666920543673772,
+  "BUENAS_TARDES": 5.484512071690348,
+  "BUENAS_NOCHES": 5.8541319668629,
+  "BIEN": 3.494429877934939,
+  "HOLA": 3.4637047606656326,
+  "ADIOS": 4.312350548660153,
+  "POR_FAVOR": 3.2905709812588495
+ },
+ "percentile": {
+  "GRACIAS": 42.5,
+  "BUENOS_DIAS": 95.0,
+  "BUENAS_TARDES": 95.0,
+  "BUENAS_NOCHES": 92.5,
+  "BIEN": 67.5,
+  "HOLA": 72.5,
+  "ADIOS": 90.0,
+  "POR_FAVOR": 82.5
+ },
+ "metrics": {
+  "GRACIAS": {
+   "n": 46,
+   "top1": 0.782608695652174,
+   "recall": 0.32608695652173914,
+   "confused_with": [
+    "ADIOS",
+    "BUENAS_NOCHES",
+    "HOLA",
+    "POR_FAVOR"
+   ]
+  },
+  "BUENOS_DIAS": {
+   "n": 74,
+   "top1": 0.7432432432432432,
+   "recall": 0.7027027027027027,
+   "confused_with": [
+    "ADIOS",
+    "BIEN",
+    "BUENAS_NOCHES",
+    "GRACIAS",
+    "HOLA"
+   ]
+  },
+  "BUENAS_TARDES": {
+   "n": 75,
+   "top1": 0.6666666666666666,
+   "recall": 0.6266666666666667,
+   "confused_with": [
+    "ADIOS",
+    "BUENAS_NOCHES",
+    "GRACIAS",
+    "HOLA",
+    "POR_FAVOR"
+   ]
+  },
+  "BUENAS_NOCHES": {
+   "n": 77,
+   "top1": 0.7272727272727273,
+   "recall": 0.6623376623376623,
+   "confused_with": [
+    "ADIOS",
+    "BIEN",
+    "BUENAS_TARDES",
+    "BUENOS_DIAS",
+    "GRACIAS",
+    "HOLA",
+    "POR_FAVOR"
+   ]
+  },
+  "BIEN": {
+   "n": 74,
+   "top1": 0.8648648648648649,
+   "recall": 0.581081081081081,
+   "confused_with": [
+    "BUENAS_NOCHES",
+    "HOLA",
+    "POR_FAVOR"
+   ]
+  },
+  "HOLA": {
+   "n": 70,
+   "top1": 0.8571428571428571,
+   "recall": 0.6142857142857143,
+   "confused_with": [
+    "ADIOS",
+    "BIEN",
+    "BUENAS_NOCHES",
+    "BUENAS_TARDES",
+    "GRACIAS",
+    "POR_FAVOR"
+   ]
+  },
+  "ADIOS": {
+   "n": 74,
+   "top1": 0.8648648648648649,
+   "recall": 0.7702702702702703,
+   "confused_with": [
+    "BIEN",
+    "HOLA"
+   ]
+  },
+  "POR_FAVOR": {
+   "n": 70,
+   "top1": 0.9571428571428572,
+   "recall": 0.7857142857142857,
+   "confused_with": [
+    "BIEN",
+    "HOLA"
+   ]
+  },
+  "_impostor_false_accept": 0.09615384615384616,
+  "_n_impostors": 208
+ }
+}
