@@ -68,6 +68,8 @@ def make_mlp():
 
 
 def fit_scaled(model, Xtr, ytr, aug=True):
+    """ytr are strings; encoded as ints because sklearn early stopping cannot score string labels."""
+    cls, ytr = np.unique(ytr, return_inverse=True)
     if aug:
         n = len(Xtr)
         Xa = augment(Xtr)
@@ -75,6 +77,7 @@ def fit_scaled(model, Xtr, ytr, aug=True):
         Xtr = Xa
     sc = StandardScaler().fit(Xtr)
     model.fit(sc.transform(Xtr), ytr)
+    model.classes_ = cls[model.classes_]
     return sc, model
 
 
