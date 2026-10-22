@@ -191,9 +191,10 @@ def to_json(members, feats, tau, per):
     for mb in members:
         m = mb["m"]
         order = [cls.index(l) for l in labels]
-        layers = [dict(W=m.coefs_[i].T.tolist(), b=m.intercepts_[i].tolist(), act="relu") for i in range(len(m.coefs_) - 1)]
-        layers.append(dict(W=m.coefs_[-1][:, order].T.tolist(), b=m.intercepts_[-1][order].tolist(), act="softmax"))
-        out.append(dict(mean=mb["sc"].mean_.tolist(), std=mb["sc"].scale_.tolist(), layers=layers))
+        R = lambda a: np.round(a, 6).tolist()  # halves the file; probs move ~1e-6 (golden uses the rounded model)
+        layers = [dict(W=R(m.coefs_[i].T), b=R(m.intercepts_[i]), act="relu") for i in range(len(m.coefs_) - 1)]
+        layers.append(dict(W=R(m.coefs_[-1][:, order].T), b=R(m.intercepts_[-1][order]), act="softmax"))
+        out.append(dict(mean=R(mb["sc"].mean_), std=R(mb["sc"].scale_), layers=layers))
     # W is [out][in]: y[o] = sum_i W[o][i]*x[i] + b[o]. Final probs = mean of the members' softmax.
     return dict(version=2, points="hand_points_v1", features=feats, labels=labels, members=out,
                 threshold=tau, thresholds=per, holdFrames=HOLD)

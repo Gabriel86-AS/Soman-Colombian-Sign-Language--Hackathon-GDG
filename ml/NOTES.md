@@ -48,6 +48,27 @@ Static-letter MLP trained and exported 2026-10-21 (`train_letters.py`; outputs `
 - z experiment skipped (no gain in the diagnostic runs). Augmentation applied to training folds only.
 - Colab gotchas: sklearn 1.8 early stopping fails with string labels (encode as ints); `files.download` did not deliver, so outputs were moved as base64 through the cell output.
 
+# Notes (phase 4 v2, 2026-10-22)
+
+Retrained after the webcam demo: the 8 dropped letters (C E F L O P T Y) never appeared because they were absent AND trained into "none". v2 = all 20 static letters + none (none = word-clip frames only). `train_letters.py` compares variants on held-out signers (GroupKFold 5 by signer), macro accuracy over 21 classes:
+
+| variant | frame | sample |
+|---|---|---|
+| xy, MLP (128,64) (= v1 setup) | 0.918 | 0.928 |
+| + z / + geometry (tip distances, joint bends) / both | 0.921 / 0.922 / 0.922 | |
+| wider (256,128), alpha 1e-3 | 0.923 | 0.931 |
+| aug x4, rotation 25 deg | 0.923 | |
+| aug 3D viewpoint (yaw/pitch +-15 deg) | 0.926 | 0.938 |
+| + full-frame LSC70 as extra training data | 0.912 (hurts) | |
+| **chosen: xy, (256,128), 3D aug, 5-model ensemble** | **0.930** | **0.938** |
+
+- Feature contract unchanged in practice: features = `xy` (same 40 dims as v1 `handshape`). z and geometry gave < 1 point, not worth the Dart code. `normalize.hand_points` + `letter_features` added (xy part == handshape).
+- `letters_mlp.json` is format v2: `members` (5 MLPs, average their softmax), `thresholds` per letter, `threshold` free mode (0.70), `holdFrames` 8. Weights rounded to 6 decimals (2.4 MB).
+- Target mode (app knows the letter): per-letter threshold = lowest value in [0.50, 0.95] where every other class has <= 5% of frames above it. Most letters 0.50; C 0.58, L 0.77, E 0.78, U 0.95. Weakest target recall: E 0.74, U 0.87, L 0.87, C 0.86, Y 0.90.
+- Remaining confusions: P->none 8%, C<->E 6-8%, E->none 6%, T->none 6%, F<->L 4-6%, Y->U 5%.
+- The VM had been reset and `frames/lsc70h` was never on Drive; re-extracted (1,400 clips, 7.5 min) and now copied to Drive `soman-ml/frames/lsc70h`. Run log + all trials: Drive `soman-ml/letters_runs.json`, `letters_v2_log.txt`.
+- Gotcha: `pkill -f train_letters.py` in a `!` line kills the cell's own shell (the pattern is in its command line).
+
 # Notes (phase 5)
 
 Words with kNN-DTW (`dtw.py`, `words_dtw.py`; Colab, 2026-10-21). Signer-held-out 5 folds over 23 signers (LSC50 persons spread one per fold), k=5, band 3 of 30 samples (10%), cost = sum of frame distances / path length.
