@@ -69,6 +69,17 @@ Retrained after the webcam demo: the 8 dropped letters (C E F L O P T Y) never a
 - The VM had been reset and `frames/lsc70h` was never on Drive; re-extracted (1,400 clips, 7.5 min) and now copied to Drive `soman-ml/frames/lsc70h`. Run log + all trials: Drive `soman-ml/letters_runs.json`, `letters_v2_log.txt`.
 - Gotcha: `pkill -f train_letters.py` in a `!` line kills the cell's own shell (the pattern is in its command line).
 
+# Notes (numbers, 2026-10-22)
+
+Same process as letters v2, run with `python extract.py lsc70h_numbers` (694 LSC70ANH crop clips, 3 min) then `python train_letters.py --set numbers`. Outputs: `ml/out/numbers_mlp.json` (same format v2 as letters), `golden/numbers.json`, `numbers_report.md`, `numbers_confusion.png`. Runs log: Drive `soman-ml/numbers_runs.json`, `numbers_log.txt`.
+
+- Classes: 1 4 5 6 7 8 9 10 MIL MILLON + none (LSC70 has no 0, 2, 3). 3,487 frames after the frame filter, 70 signers. none = the same 2,000 word-clip frames (letters are NOT in none).
+- Held-out macro (11 classes): xy 0.861; +z/+geo all worse; wider worse; aug x4 0.858; **3D aug 0.868 (chosen, sample 0.908)**; +full-frame LSC70 0.869 and ensemble x5 0.872 below the keep rule. So the model is 1 MLP (128,64), xy features: no new Dart code.
+- Strong: 5, 7, 8, 4 (0.93-0.96). Weak: **1 <-> 6** (15-17% each way; target recall 1: 0.35, 6: 0.65 at thresholds 0.85/0.81), 9 -> 4 (14%), MILLON/MIL/10 -> none (12-19%).
+- **10, MIL, MILLON move:** within-sample shape spread 0.6-1.4 vs 0.1-0.4 for the others. The static model still gets 0.81-0.87 on them from 6 frames, but they are better suited to the moving-sign path (DTW, Phase 6) if they fail on the phone.
+- Golden: 14 cases (4 mirrored), JSON vs sklearn max error 3.2e-6.
+- `test_letters_v2.py` golden check loosened to 1e-5 (weights are rounded to 6 decimals since v2; it failed at 1e-9).
+
 # Notes (phase 5)
 
 Words with kNN-DTW (`dtw.py`, `words_dtw.py`; Colab, 2026-10-21). Signer-held-out 5 folds over 23 signers (LSC50 persons spread one per fold), k=5, band 3 of 30 samples (10%), cost = sum of frame distances / path length.

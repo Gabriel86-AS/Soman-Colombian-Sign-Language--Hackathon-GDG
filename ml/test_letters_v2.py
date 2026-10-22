@@ -51,7 +51,7 @@ def test_pipeline():
     model = T.to_json(members, cfg["feats"], tau, per)
     L = dict(lm=lms, w=np.full(len(lms), 240), h=np.full(len(lms), 240), hand=np.array(["Right"] * len(lms)), y=D["y"])
     gold, err = T.golden(model, L, members, cfg["feats"])
-    assert err < 1e-9 and len(gold["cases"]) == 6, (err, len(gold["cases"]))
+    assert err < 1e-5 and len(gold["cases"]) == 6, (err, len(gold["cases"]))  # weights rounded to 6 decimals
     print("pipeline ok: macro", round(r["macro"], 3), "tau", round(tau, 3), "golden err", err)
 
 
