@@ -4,7 +4,7 @@
     python demo_numbers.py --check      # no camera: check the model against golden/numbers.json
 
 Keys (target mode, like the app: "is this the number I asked for?"):
-    1 4 5 6 7 8 9 = that number, 0 = 10, M = MIL, N = MILLON
+    1-9 = that number (2, 3 if the model has them), 0 = 10, M = MIL, N = MILLON
     Space = free mode (guess any number), Esc = quit.
 
 Same pipeline as training: HandLandmarker finds the hand, the frame is cropped around it (like the
@@ -31,7 +31,7 @@ CONN = [(0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8), (5, 9), 
         (11, 12), (9, 13), (13, 14), (14, 15), (15, 16), (13, 17), (17, 18), (18, 19), (19, 20), (0, 17)]
 PAD, CROP, MARGIN = 60, 120, 1.25  # crop side = MARGIN * hand box; LSC70ANH hands fill their 120 px crop
 ALPHA = 0.4  # probability smoothing across frames (one bad frame does not break the hold)
-KEYS = {"1": "1", "4": "4", "5": "5", "6": "6", "7": "7", "8": "8", "9": "9", "0": "10", "m": "MIL", "n": "MILLON"}
+KEYS = {"1": "1", "2": "2", "3": "3", "4": "4", "5": "5", "6": "6", "7": "7", "8": "8", "9": "9", "0": "10", "m": "MIL", "n": "MILLON"}
 
 
 def forward(model, f):
@@ -174,7 +174,7 @@ def main():
         mode = f"target {target}" if target else "free"
         cv2.putText(view, text, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2)
         cv2.putText(view, f"{'OK ' if target and shown else ''}number: {shown}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 1.6, (0, 200, 0), 3)
-        cv2.putText(view, f"mode: {mode} | 1 4-9, 0=10, M=MIL, N=MILLON | Space = free, Esc = quit", (10, hh - 12),
+        cv2.putText(view, f"mode: {mode} | 1-9, 0=10, M=MIL, N=MILLON | Space = free, Esc = quit", (10, hh - 12),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
         view[10:250, ww - 250:ww - 10] = crop_bgr
         cv2.imshow("Soman numbers demo", view)
@@ -183,7 +183,7 @@ def main():
             break
         if k == ord(" "):
             target, shown = None, ""
-        elif chr(k).lower() in KEYS:
+        elif chr(k).lower() in KEYS and KEYS[chr(k).lower()] in labels:  # 2, 3 only in the --custom model
             target, shown = KEYS[chr(k).lower()], ""
     cap.release()
     cv2.destroyAllWindows()
