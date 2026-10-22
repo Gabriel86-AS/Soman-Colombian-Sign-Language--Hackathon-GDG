@@ -46,14 +46,15 @@ def build_letters(df, keep):
 
 
 def estimate_idle_thr(clips):
-    """Wrist speed (palm units/s) of the first/last 10% of LSC50 MVP frames; take the 95th percentile."""
+    """Wrist speed (palm units/s) of the first/last 10% of LSC50 MVP frames; threshold = 3x the median
+    (the upper tail is hands entering/leaving the frame, not rest)."""
     sp = []
     for g in clips:
         out = _dominant_speed_edges(g)
         if out is not None:
             sp.append(out)
     sp = np.concatenate(sp)
-    return float(np.percentile(sp, 95))
+    return float(3 * np.median(sp))
 
 
 def _dominant_speed_edges(g):
@@ -103,7 +104,7 @@ def build_sequences(df, keep, name, mask, T, idle_thr):
     arrs = {k: np.array(v) for k, v in out.items()}
     np.savez_compressed(f"{FEATS}/sequences_{name}.npz", source_tracker=np.full(len(labels), "hand_landmarker"),
                         **arrs)
-    json.dump(two, open(f"{FEATS}/two_handed_{name}.json", "w"))
+    json.dump([str(x) for x in two], open(f"{FEATS}/two_handed_{name}.json", "w"))
     print(f"sequences_{name}: {len(labels)} clips, X {arrs['X'].shape}, two_handed={two}")
 
 
