@@ -47,3 +47,18 @@ Static-letter MLP trained and exported 2026-10-21 (`train_letters.py`; outputs `
 - Golden: 20 cases (4 phone-mirrored versions with flipped handedness; features identical). Numpy forward pass of the JSON matches sklearn to 2e-16.
 - z experiment skipped (no gain in the diagnostic runs). Augmentation applied to training folds only.
 - Colab gotchas: sklearn 1.8 early stopping fails with string labels (encode as ints); `files.download` did not deliver, so outputs were moved as base64 through the cell output.
+
+# Notes (phase 5)
+
+Words with kNN-DTW (`dtw.py`, `words_dtw.py`; Colab, 2026-10-21). Signer-held-out 5 folds over 23 signers (LSC50 persons spread one per fold), k=5, band 3 of 30 samples (10%), cost = sum of frame distances / path length.
+
+- **Gate 5 FAILS.** With impostor false-accept <= 10%, no word reaches 80% recall. Per the phase rule the 8 words stay video-only ("Mira y elige") until team templates are added (Phase 6) and the numbers are rechecked.
+- **Variants (top-1 over the 8 words, no reject, 40 templates/word):** A hand only 0.62 avg (BUENAS_TARDES 0.55); B shoulder-anchored 0.72; **C 0.80** = B + nose-relative position + second hand (shape x0.3, shoulder-relative position). B/C beat A by >= 10 points on BUENOS_DIAS / TARDES / NOCHES, so the **body anchor is adopted: the app must run PoseLandmarker lite** (shoulders + nose, median over the clip). Chosen: C. Feature layout and weights are in each template file (`layout`).
+- **C per word (top-1 -> recall at threshold, FA 9.6% on 208 LSC50 impostors):** GRACIAS 0.78 -> 0.33, BUENOS_DIAS 0.74 -> 0.70, BUENAS_TARDES 0.67 -> 0.63, BUENAS_NOCHES 0.73 -> 0.66, BIEN 0.86 -> 0.58, HOLA 0.86 -> 0.61, ADIOS 0.86 -> 0.77, POR_FAVOR 0.96 -> 0.79. Thresholds were fit on the same out-of-fold scores, so these are slightly optimistic.
+- **Cross-dataset (templates from one dataset, test on the other, top-1):** C LSC50->LSC-54 0.56, LSC-54->LSC50 0.58 (B 0.62/0.61, A 0.61/0.54). New camera/person generalizes poorly: this is the honest "new user, new phone" number.
+- **Why it stops there:** diffuse confusions among BUENOS/BUENAS_* and GRACIAS; the hand-only location (relative to the first frame) is close to noise (0.26 alone). Swapping hand order, delta features, other k and weights did not move it past ~0.82.
+- **Templates:** 40 medoids/word (not 20: 20 gave ~0.74 vs 0.79), rounded to 3 decimals, `ml/out/templates/<word>.json` (5 MB total, DTW over 320 templates is cheap). Each carries `source`, `threshold`, `two_handed`, `layout`, `feature_version` v2. `golden/words.json` holds 20 query cases with expected class scores plus one pure DTW pair; tolerance 1e-4.
+- **Impostor limits:** only LSC50 impostors have pose (208 clips from 5 people); LSC-54 non-MVP signs have none. LSC-54 courtesy signs besides the 8 words were not used as extra impostors for the C/B tests (variant A used 1,002).
+- **Two-handed (data-driven):** BUENOS_DIAS, BUENAS_TARDES, BUENAS_NOCHES, GRACIAS. CHAO = ADIOS merged (checked in Phase 1).
+- Sequences now also hold `locN`, `locB2`, `locN2` (nose-relative / second hand). The pose pass also ran on the LSC50 impostors.
+- Gotcha: `pkill -f <name>` inside a `subprocess.run(shell=True)` kills its own shell (the pattern is in its command line).
