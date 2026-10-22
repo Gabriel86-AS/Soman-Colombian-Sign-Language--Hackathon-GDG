@@ -1,7 +1,7 @@
 """Clip -> fixed-length feature sequence (Stage F). Features come from normalize.py.
 
 clip_to_sequence(g, T, ...) takes one clip's rows from the frames table (all hands, all frames).
-Returns dict(X [T,42], X2 [T,42], locB [T,2], dom_path, second_path) or None if unusable.
+Returns dict(X [T,42], X2 [T,42], locB/locN/locB2/locN2 [T,2], dom_path, second_path) or None if unusable.
 """
 import numpy as np
 
@@ -122,14 +122,17 @@ def _hand_features(arr, t, w, h, is_left, nose_sh, T, idle_thr):
     shape = N.handshape_seq(arr, w, h, is_left, scale)
     locA = N.location_a(wrist, scale)
     if nose_sh is not None:
-        lsh, rsh = nose_sh
+        nose, lsh, rsh = nose_sh
         if is_left:
-            lsh, rsh = lsh * [-1, 1], rsh * [-1, 1]
+            nose, lsh, rsh = nose * [-1, 1], lsh * [-1, 1], rsh * [-1, 1]
         locB = N.location_b(wrist, scale, None, lsh, rsh)
+        width = np.sqrt(((lsh - rsh) ** 2).sum())
+        locN = (wrist - nose) / max(width, 1e-9)
     else:
-        locB = np.full((len(arr), 2), np.nan)
+        locB = locN = np.full((len(arr), 2), np.nan)
     path = float(np.hypot(*np.diff(wrist, axis=0).T).sum() / scale)
-    return dict(X=_resample(np.hstack([shape, locA]), t, T), locB=_resample(locB, t, T), path=path)
+    return dict(X=_resample(np.hstack([shape, locA]), t, T), locB=_resample(locB, t, T),
+                locN=_resample(locN, t, T), path=path)
 
 
 def clip_to_sequence(g, T, idle_thr=None):
@@ -147,9 +150,10 @@ def clip_to_sequence(g, T, idle_thr=None):
         lefts = [tk["f"][fr][1] for fr in tk["f"]]
         is_left = np.mean(lefts) > 0.5  # majority label over the clip
         sh = None
-        p = g[["lsh_x", "lsh_y", "rsh_x", "rsh_y"]].median()
+        p = g[["nose_x", "nose_y", "lsh_x", "lsh_y", "rsh_x", "rsh_y"]].median()
         if not p.isna().any():
-            sh = (np.array([p.lsh_x * w, p.lsh_y * h]), np.array([p.rsh_x * w, p.rsh_y * h]))
+            sh = (np.array([p.nose_x * w, p.nose_y * h]), np.array([p.lsh_x * w, p.lsh_y * h]),
+                  np.array([p.rsh_x * w, p.rsh_y * h]))
         f = _hand_features(arr, t_ms[sl], w, h, is_left, sh, T, idle_thr)
         if f is not None:
             feats.append(f)
@@ -158,5 +162,7 @@ def clip_to_sequence(g, T, idle_thr=None):
     feats.sort(key=lambda f: -f["path"])
     d = feats[0]
     s = feats[1] if len(feats) > 1 else None
-    return dict(X=d["X"], locB=d["locB"], dom_path=d["path"],
-                X2=s["X"] if s else np.zeros_like(d["X"]), second_path=s["path"] if s else 0.0)
+    z2 = np.zeros_like(d["locB"])
+    return dict(X=d["X"], locB=d["locB"], locN=d["locN"], dom_path=d["path"],
+                X2=s["X"] if s else np.zeros_like(d["X"]), locB2=s["locB"] if s else z2,
+                locN2=s["locN"] if s else z2, second_path=s["path"] if s else 0.0)

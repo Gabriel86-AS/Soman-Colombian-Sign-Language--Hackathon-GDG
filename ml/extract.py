@@ -166,7 +166,7 @@ def load_rows(groups):
     m["group"] = m.apply(group_of, axis=1)
     # LSC70: one clip = 6 files; keep only k=0 as the clip entry point
     m = m[~((m.dataset == "lsc70") & ~m.sample_id.str.endswith("_0"))]
-    m["pose"] = m.group.isin(["lsc54_mvp", "lsc50_mvp"])
+    m["pose"] = m.group.isin(["lsc54_mvp", "lsc50_mvp", "lsc50_imp"])
     rows = []
     for g in groups:
         if g == "lsc70h_static":

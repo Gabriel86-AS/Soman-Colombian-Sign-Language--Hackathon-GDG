@@ -86,12 +86,13 @@ def _dominant_speed_edges(g):
 def build_sequences(df, keep, name, mask, T, idle_thr):
     d = df.merge(keep, on=["dataset", "sample_id"])
     d = d[mask(d)]
-    out = dict(X=[], X2=[], locB=[], label=[], signer=[], dataset=[], sample_id=[], dom=[], sec=[])
+    out = dict(X=[], X2=[], locB=[], locN=[], locB2=[], locN2=[], label=[], signer=[], dataset=[], sample_id=[], dom=[], sec=[])
     for (ds, sid), g in d.groupby(["dataset", "sample_id"], sort=False):
         r = S.clip_to_sequence(g, T, idle_thr)
         if r is None:
             continue
-        for k, v in (("X", r["X"]), ("X2", r["X2"]), ("locB", r["locB"]), ("label", g.label.iat[0]),
+        for k, v in (("X", r["X"]), ("X2", r["X2"]), ("locB", r["locB"]),
+                     ("locN", r["locN"]), ("locB2", r["locB2"]), ("locN2", r["locN2"]), ("label", g.label.iat[0]),
                      ("signer", g.signer.iat[0]), ("dataset", ds), ("sample_id", sid),
                      ("dom", r["dom_path"]), ("sec", r["second_path"])):
             out[k].append(v)
