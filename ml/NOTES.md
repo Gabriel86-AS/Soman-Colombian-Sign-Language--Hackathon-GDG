@@ -36,3 +36,14 @@ Built 2026-10-21 (`normalize.py`, `sequences.py`, `build_features.py`, `tests/`;
 - Two-handed (data-driven, second hand >40% of dominant path in most clips) among MVP words: BUENOS_DIAS, BUENAS_TARDES, BUENAS_NOCHES, GRACIAS. HOLA, ADIOS, BIEN, POR_FAVOR are one-handed. Lists in `features/two_handed_words.json`. Check by eye on the contact sheets.
 - Front-camera mirroring: contract step 2 (mirror by handshedness label) makes it irrelevant for handshape; Phase 4 golden test must prove it on a phone-mirrored frame.
 - Gotcha: `SOMAN_OUT` must point at the frames dir that actually holds the parts (`/content/frames_test` on the current VM; Drive copy is the same).
+
+# Notes (phase 4)
+
+Static-letter MLP trained and exported 2026-10-21 (`train_letters.py`; outputs `ml/out/letters_mlp.json`, `golden/letters.json`, `letters_report.md`, `letters_confusion.png`).
+
+- **Full LSC70 frames do not work for letters.** Hands are ~40 px in full-body 640x480 shots: signer-split accuracy was ~0.69 for every feature set tried (xy, +z, 3D distances; LR and MLP), and a random split only 0.78. Fix = Gate 1b fallback: `LSC70ANH` crops padded 120->240 (`python extract.py lsc70h_static`, dataset `lsc70h`). Result: kNN 0.877, logreg 0.899, MLP+aug 0.917. `build_features.py` now reads `lsc70h` for letters (`SOMAN_LETTER_DS`). **Implication for the app:** the phone must crop around the hand before running HandLandmarker, or hold the hand close to the camera. Normal selfie framing will not match training.
+- Gate 2 passes: 14 of 20 letters >= 90%. Chosen (12): A B D I K M Q R U V W X; final held-out: 0.905-0.994 each, none 0.912. Weak letters: E (0.80), C (0.87, confused with E), F/L, P->none.
+- tau = 0.859 (5% of none frames above), holdFrames 8. "none" = 2,000 mid-sign frames from LSC50/LSC-54 word clips plus 600 frames of the dropped letters.
+- Golden: 20 cases (4 phone-mirrored versions with flipped handedness; features identical). Numpy forward pass of the JSON matches sklearn to 2e-16.
+- z experiment skipped (no gain in the diagnostic runs). Augmentation applied to training folds only.
+- Colab gotchas: sklearn 1.8 early stopping fails with string labels (encode as ints); `files.download` did not deliver, so outputs were moved as base64 through the cell output.
