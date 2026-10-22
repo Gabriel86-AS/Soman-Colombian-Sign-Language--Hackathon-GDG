@@ -197,6 +197,7 @@ def evaluate():
 
 def export(variant):
     F, m, ok = load(variant)
+    F = np.round(F, 3)  # the app stores 3 decimals; scores below are computed on exactly what it gets
     lab, ds = m["label"], m["ds"]
     S, _, keep = oof(variant)
     thr, pct, fa = thresholds(S, lab, keep)
@@ -210,7 +211,7 @@ def export(variant):
         ti = tidx[lab[tidx] == w]
         json.dump(dict(word=w, feature_version=FEATURE_VERSION, variant=variant, T=T, dim=int(F.shape[2]),
                        band=BAND, k=K, layout=[[n, wg] for n, _, wg in layout(variant)], threshold=round(thr[w], 5), two_handed=w in two,
-                       templates=[dict(source=SOURCE[ds[i]], X=np.round(F[i], 4).tolist()) for i in ti]),
+                       templates=[dict(source=SOURCE[ds[i]], X=F[i].tolist()) for i in ti]),
                   open(f"{OUTDIR}/templates/{w}.json", "w"), separators=(",", ":"))
     # golden: queries (2 per word + 4 impostors) and their class scores against the exported templates
     rng = np.random.default_rng(0)
@@ -222,10 +223,10 @@ def export(variant):
     cases = []
     for r, i in enumerate(q):
         p = int(sc[r].argmin())
-        cases.append(dict(label=str(lab[i]), X=np.round(F[i], 5).tolist(),
+        cases.append(dict(label=str(lab[i]), X=F[i].tolist(),
                           scores={w: round(float(sc[r, j]), 5) for j, w in enumerate(WORDS)},
                           predicted=WORDS[p], accepted=bool(sc[r, p] <= thr[WORDS[p]])))
-    a, b = np.round(F[q[0]], 5), np.round(F[q[3]], 5)
+    a, b = F[q[0]], F[q[3]]
     json.dump(dict(feature_version=FEATURE_VERSION, variant=variant, band=BAND, k=K, tolerance=1e-4,
                    dtw_pairs=[dict(a=a.tolist(), b=b.tolist(), dist=float(D.dtw(a, b, BAND)))], cases=cases),
               open(f"{OUTDIR}/golden/words.json", "w"), separators=(",", ":"))
