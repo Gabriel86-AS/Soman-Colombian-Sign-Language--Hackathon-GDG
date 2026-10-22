@@ -4,6 +4,10 @@ signers, keeps a change only when it helps, exports letters_mlp.json (v2) + gold
     python train_letters.py                  # explore variants, then export the best
     python train_letters.py --quick          # skip exploring, export the saved best config (runs.json)
     python train_letters.py --set numbers    # same process on the LSC70 numbers -> numbers_mlp.json
+    python train_letters.py --set numbers --custom   # + our own captures (frames/custom, adds 2 and 3)
+
+Our captures (capture/capture_custom.py -> capture/custom_to_frames.py) are dataset "custom", one signer
+per person (team:<name>_p<id>); they join the same signer-split cross-validation as LSC70.
 
 Env: SOMAN_OUT (frames dir), SOMAN_QC, SOMAN_EXPORT (default ml/out), SOMAN_CACHE (/content/cache).
 """
@@ -31,7 +35,10 @@ CACHE = os.environ.get("SOMAN_CACHE", "/content/cache")
 SETS = {"letters": (STATIC, "20 static letters"), "numbers": (NUMBERS, "10 numbers (1, 4-10, MIL, MILLON)")}
 SET = sys.argv[sys.argv.index("--set") + 1] if "--set" in sys.argv else "letters"
 LABELS, SET_DESC = SETS[SET]
-RUNS = os.path.join(os.path.dirname(OUT.rstrip("/")), f"{SET}_runs.json")
+CUSTOM = "--custom" in sys.argv
+if CUSTOM and SET == "numbers":  # LSC70 has no 2 or 3; our captures do
+    LABELS, SET_DESC = NUMBERS | {"2", "3"}, "12 numbers (1-10, MIL, MILLON; 2 and 3 only from our captures)"
+RUNS = os.path.join(os.path.dirname(OUT.rstrip("/")), f"{SET}{'_custom' if CUSTOM else ''}_runs.json")
 N_NONE = 2000
 HOLD = 8
 BASE = dict(feats="xy", hidden=[128, 64], alpha=1e-4, copies=2, rot=15, aug3d=False, extra=False, seeds=1)
@@ -88,15 +95,26 @@ def frame_filter(P, sample_ids):
     return ~((medd > 0) & (dist > 2 * medd))
 
 
-def load_letters(ds, keep):
-    d = _read(ds, keep)
+def _letters(d, ds):
     d = d[d.label.isin(LABELS)].reset_index(drop=True)
     P, lm = to_points(d)
     ok = frame_filter(P, d.sample_id.to_numpy())
     d = d[ok].reset_index(drop=True)
     return dict(P=P[ok], lm=lm[ok], y=d.label.to_numpy(str), g=d.signer.to_numpy(str),
                 sid=d.sample_id.to_numpy(str), w=d.img_w.to_numpy(), h=d.img_h.to_numpy(),
-                hand=d.handedness.to_numpy(str))
+                hand=d.handedness.to_numpy(str), src=np.full(len(d), ds))
+
+
+def load_letters(ds, keep):
+    return _letters(_read(ds, keep), ds)
+
+
+def load_custom():
+    """Our captures: every frame has a hand (the capture only saves those), so no qc keep list."""
+    d = pd.read_parquet(os.path.join(OUT, "custom"))
+    d["label"] = d.label.astype(str)
+    d[S.HAND_COLS] = d[S.HAND_COLS].astype(float)
+    return _letters(d, "custom")
 
 
 def load_none(keep):
@@ -106,7 +124,7 @@ def load_none(keep):
     d = d[(rel > 0.2) & (rel < 0.8)].sample(N_NONE, random_state=0).reset_index(drop=True)
     P, _ = to_points(d)
     return dict(P=P, y=np.full(len(d), "none"), g=d.signer.to_numpy(str),
-                sid=np.array([f"none{i}" for i in range(len(d))]))
+                sid=np.array([f"none{i}" for i in range(len(d))]), src=np.full(len(d), "none"))
 
 
 # ---------------------------------------------------------------- model
@@ -266,8 +284,12 @@ def main():
     os.makedirs(f"{EXPORT}/golden", exist_ok=True)
     keep = load_keep()
     L = load_letters("lsc70h", keep)
+    if CUSTOM:
+        C = load_custom()
+        print(f"custom: {len(C['y'])} frames, signers {sorted(set(C['g']))}, labels {sorted(set(C['y']))}", flush=True)
+        L = {k: np.concatenate([L[k], C[k]]) for k in L}
     Nn = load_none(keep)
-    D = {k: np.concatenate([L[k], Nn[k]]) for k in ("P", "y", "g", "sid")}
+    D = {k: np.concatenate([L[k], Nn[k]]) for k in ("P", "y", "g", "sid", "src")}
     classes = np.unique(D["y"])
     print(f"{SET} {len(L['y'])} frames ({len(set(L['y']))} classes, {len(set(L['g']))} signers), none {len(Nn['y'])}", flush=True)
     missing = sorted(LABELS - set(L["y"]))
@@ -307,7 +329,7 @@ def main():
         best_cfg = saved["chosen"] or dict(BASE)
         prior = [e for e in saved["trials"] if not e["name"].startswith("quick:")]
         best = trial("quick: chosen", best_cfg)
-        args = [a for a in sys.argv[1:] if a not in ("--quick", "--set", SET)]
+        args = [a for a in sys.argv[1:] if a not in ("--quick", "--set", SET, "--custom")]
         if args:
             cfg = dict(best_cfg, **json.loads(args[0]))
             r = trial(f"quick: chosen + {args[0]}", cfg)
@@ -362,9 +384,11 @@ def main():
     for _, idx in pd.Series(L["sid"]).groupby(L["sid"]).indices.items():
         spread[idx] = np.linalg.norm(X[idx] - np.median(X[idx], 0), axis=1)
     spread = pd.Series(spread).groupby(L["y"]).mean()
+    n_own = int((L["src"] == "custom").sum())
+    own = f" + {n_own} frames of our own captures" if CUSTOM else ""
     conf = sorted(((float((r["pred"][y == a] == b).mean()), a, b) for a in letters for b in classes if a != b), reverse=True)[:12]
     rep = [f"# {SET.capitalize()} model report (v2)", "",
-           f"Frames: {len(L['y'])} {SET} frames ({SET_DESC}, {len(set(L['g']))} signers, LSC70ANH crops) + {len(Nn['y'])} none frames.",
+           f"Frames: {len(L['y'])} {SET} frames ({SET_DESC}, {len(set(L['g']))} signers, LSC70ANH crops{own}) + {len(Nn['y'])} none frames.",
            "All numbers are on held-out signers (GroupKFold 5 by signer).", "",
            f"## Variants tried (macro accuracy over {len(letters)} {SET} + none, frame level / sample level)", "",
            "| variant | frame | sample |", "|---|---|---|"]
@@ -378,6 +402,25 @@ def main():
     rep += [f"| none | {r['acc']['none']:.3f} | | | | |", "",
             f"Macro: frame {r['macro']:.3f}, sample {r['macro_sample']:.3f}.", "",
             "## Most confused (true -> predicted, frame level)", ""] + [f"- {a} -> {b}: {v:.3f}" for v, a, b in conf]
+    if CUSTOM:
+        # our captures, each person held out (their fold never saw them), plus LSC70 alone for comparison
+        cm_ = D["src"] == "custom"
+        ppl = sorted(set(D["g"][cm_]))
+        cl = sorted(set(D["y"][cm_]), key=lambda c: (len(c), c))
+        rep += ["", "## Our captures (each person held out)", "",
+                "| sign | " + " | ".join(p.split(":")[-1] for p in ppl) + " | all | frames |",
+                "|---|" + "---|" * (len(ppl) + 2)]
+        for c in cl:
+            cells = []
+            for p in ppl:
+                k = cm_ & (D["g"] == p) & (y == c)
+                cells.append(f"{(r['pred'][k] == c).mean():.2f}" if k.any() else "")
+            k = cm_ & (y == c)
+            rep.append(f"| {c} | " + " | ".join(cells) + f" | {(r['pred'][k] == c).mean():.3f} | {int(k.sum())} |")
+        lm_ = D["src"] != "custom"
+        old = [c for c in classes if c not in ("2", "3")]
+        rep += ["", f"Our captures macro {np.mean([(r['pred'][cm_ & (y == c)] == c).mean() for c in cl]):.3f}; "
+                f"LSC70 + none frames only, macro {np.mean([(r['pred'][lm_ & (y == c)] == c).mean() for c in old]):.3f}."]
     rep += ["", f"Free-mode threshold tau = {tau:.3f} (<= 5% of none frames above it, floor 0.70). holdFrames = {HOLD}.",
             "Target thresholds: for every other class, <= 5% of its frames reach the threshold (per frame, before the 8-frame hold).", "",
             f"Golden: {len(gold['cases'])} cases (4 mirrored); JSON forward pass vs sklearn max error {err:.2e}"]
