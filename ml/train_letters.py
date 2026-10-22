@@ -1,8 +1,9 @@
 """Phase 4 (v2): static-letter MLP on all 20 static letters + none. Compares variants on held-out
 signers, keeps a change only when it helps, exports letters_mlp.json (v2) + golden vectors + report.
 
-    python train_letters.py            # explore variants, then export the best
-    python train_letters.py --quick    # skip exploring, export the saved best config (runs.json)
+    python train_letters.py                  # explore variants, then export the best
+    python train_letters.py --quick          # skip exploring, export the saved best config (runs.json)
+    python train_letters.py --set numbers    # same process on the LSC70 numbers -> numbers_mlp.json
 
 Env: SOMAN_OUT (frames dir), SOMAN_QC, SOMAN_EXPORT (default ml/out), SOMAN_CACHE (/content/cache).
 """
@@ -20,13 +21,17 @@ from sklearn.preprocessing import StandardScaler
 
 import normalize as N
 import sequences as S
-from extract import OUT, STATIC
+from extract import OUT, STATIC, NUMBERS
 from build_features import QC
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 EXPORT = os.environ.get("SOMAN_EXPORT", os.path.join(HERE, "out"))
 CACHE = os.environ.get("SOMAN_CACHE", "/content/cache")
-RUNS = os.path.join(os.path.dirname(OUT.rstrip("/")), "letters_runs.json")
+# name -> (labels, description for the report). Both use LSC70ANH hand crops (dataset lsc70h).
+SETS = {"letters": (STATIC, "20 static letters"), "numbers": (NUMBERS, "10 numbers (1, 4-10, MIL, MILLON)")}
+SET = sys.argv[sys.argv.index("--set") + 1] if "--set" in sys.argv else "letters"
+LABELS, SET_DESC = SETS[SET]
+RUNS = os.path.join(os.path.dirname(OUT.rstrip("/")), f"{SET}_runs.json")
 N_NONE = 2000
 HOLD = 8
 BASE = dict(feats="xy", hidden=[128, 64], alpha=1e-4, copies=2, rot=15, aug3d=False, extra=False, seeds=1)
@@ -34,14 +39,31 @@ BASE = dict(feats="xy", hidden=[128, 64], alpha=1e-4, copies=2, rot=15, aug3d=Fa
 
 # ---------------------------------------------------------------- data
 def _read(ds, keep):
-    path = f"{CACHE}/{ds}.parquet"
+    n = len(os.listdir(os.path.join(OUT, ds)))  # part count in the name: new clips -> new cache
+    path = f"{CACHE}/{ds}_{n}.parquet"
     if not os.path.exists(path):
         os.makedirs(CACHE, exist_ok=True)
         t = time.time()
         pd.read_parquet(os.path.join(OUT, ds)).to_parquet(path)
         print(f"cached {ds} in {time.time() - t:.0f}s", flush=True)
     d = pd.read_parquet(path)
+    d["label"] = d.label.astype(str)
     return d[d.hand_idx >= 0].merge(keep, on=["dataset", "sample_id"]).reset_index(drop=True)
+
+
+def load_keep(ds="lsc70h"):
+    """Kept clips from qc/clips.csv; clips of this set missing there (extracted later) get the same rule."""
+    keep = pd.read_csv(f"{QC}/clips.csv", dtype={"label": str})
+    d = pd.read_parquet(os.path.join(OUT, ds))
+    d["label"] = d.label.astype(str)
+    d = d[d.label.isin(LABELS)]
+    new = d[~d.sample_id.isin(keep[keep.dataset == ds].sample_id)]
+    if len(new):
+        from qc import clip_table
+        new = new.assign(has_hand=new.hand_idx >= 0)
+        keep = pd.concat([keep, clip_table(new)], ignore_index=True)
+        print(f"qc keep rule applied to {new.sample_id.nunique()} new {ds} clips", flush=True)
+    return keep[keep.keep.astype(bool)][["dataset", "sample_id"]]
 
 
 def to_points(d):
@@ -68,7 +90,7 @@ def frame_filter(P, sample_ids):
 
 def load_letters(ds, keep):
     d = _read(ds, keep)
-    d = d[d.label.isin(STATIC)].reset_index(drop=True)
+    d = d[d.label.isin(LABELS)].reset_index(drop=True)
     P, lm = to_points(d)
     ok = frame_filter(P, d.sample_id.to_numpy())
     d = d[ok].reset_index(drop=True)
@@ -242,13 +264,15 @@ def golden(model, D, members, feats):
 def main():
     quick = "--quick" in sys.argv
     os.makedirs(f"{EXPORT}/golden", exist_ok=True)
-    keep = pd.read_csv(f"{QC}/clips.csv")
-    keep = keep[keep.keep][["dataset", "sample_id"]]
+    keep = load_keep()
     L = load_letters("lsc70h", keep)
     Nn = load_none(keep)
     D = {k: np.concatenate([L[k], Nn[k]]) for k in ("P", "y", "g", "sid")}
     classes = np.unique(D["y"])
-    print(f"letters {len(L['y'])} frames ({len(set(L['y']))} classes, {len(set(L['g']))} signers), none {len(Nn['y'])}", flush=True)
+    print(f"{SET} {len(L['y'])} frames ({len(set(L['y']))} classes, {len(set(L['g']))} signers), none {len(Nn['y'])}", flush=True)
+    missing = sorted(LABELS - set(L["y"]))
+    if missing:
+        print("WARNING: no frames for", missing, flush=True)
     extra = None
 
     saved = json.load(open(RUNS)) if os.path.exists(RUNS) else dict(trials=[], chosen=None)
@@ -257,13 +281,19 @@ def main():
     def load_extra():
         nonlocal extra
         if extra is None:
-            E = load_letters("lsc70", keep)
+            try:
+                E = load_letters("lsc70", keep)
+            except (FileNotFoundError, ValueError):
+                E = dict(P=np.zeros((0, 21, 3)), y=np.array([]), g=np.array([]))
             extra = dict(P=E["P"], y=E["y"], g=E["g"])
             print(f"extra full-frame lsc70: {len(E['y'])} frames", flush=True)
 
     def trial(name, cfg):
         if cfg["extra"]:
             load_extra()
+            if len(extra["y"]) == 0:
+                print(f"{name:28s} skipped (no full-frame lsc70 data for {SET})", flush=True)
+                return dict(macro=-1.0)
         t = time.time()
         r = score(cv(cfg, D, extra), D, classes)
         log.append(dict(name=name, cfg=cfg, macro=r["macro"], macro_sample=r["macro_sample"]))
@@ -277,7 +307,7 @@ def main():
         best_cfg = saved["chosen"] or dict(BASE)
         prior = [e for e in saved["trials"] if not e["name"].startswith("quick:")]
         best = trial("quick: chosen", best_cfg)
-        args = [a for a in sys.argv[1:] if a != "--quick"]
+        args = [a for a in sys.argv[1:] if a not in ("--quick", "--set", SET)]
         if args:
             cfg = dict(best_cfg, **json.loads(args[0]))
             r = trial(f"quick: chosen + {args[0]}", cfg)
@@ -319,31 +349,39 @@ def main():
         P, y = np.concatenate([P, extra["P"]]), np.r_[y, extra["y"]]
     members = Parallel(n_jobs=-1)(delayed(fit)(best_cfg, P, y, s) for s in range(best_cfg["seeds"]))
     model = to_json(members, best_cfg["feats"], tau, per)
-    json.dump(model, open(f"{EXPORT}/letters_mlp.json", "w"))
+    json.dump(model, open(f"{EXPORT}/{SET}_mlp.json", "w"))
     gold, err = golden(model, L, members, best_cfg["feats"])
-    json.dump(gold, open(f"{EXPORT}/golden/letters.json", "w"))
+    json.dump(gold, open(f"{EXPORT}/golden/{SET}.json", "w"))
 
     letters = [c for c in classes if c != "none"]
     y = D["y"]
+    # motion check: a static model only fits signs whose handshape holds still over the 6 frames.
+    # spread = mean distance of a frame to its sample's median shape (xy features, palm units)
+    X = N.letter_features(L["P"], "xy")
+    spread = np.zeros(len(X))
+    for _, idx in pd.Series(L["sid"]).groupby(L["sid"]).indices.items():
+        spread[idx] = np.linalg.norm(X[idx] - np.median(X[idx], 0), axis=1)
+    spread = pd.Series(spread).groupby(L["y"]).mean()
     conf = sorted(((float((r["pred"][y == a] == b).mean()), a, b) for a in letters for b in classes if a != b), reverse=True)[:12]
-    rep = ["# Letter model report (v2)", "",
-           f"Frames: {len(L['y'])} letter frames (20 static letters, 70 signers, LSC70ANH crops) + {len(Nn['y'])} none frames.",
+    rep = [f"# {SET.capitalize()} model report (v2)", "",
+           f"Frames: {len(L['y'])} {SET} frames ({SET_DESC}, {len(set(L['g']))} signers, LSC70ANH crops) + {len(Nn['y'])} none frames.",
            "All numbers are on held-out signers (GroupKFold 5 by signer).", "",
-           "## Variants tried (macro accuracy over 20 letters + none, frame level / sample level)", "",
+           f"## Variants tried (macro accuracy over {len(letters)} {SET} + none, frame level / sample level)", "",
            "| variant | frame | sample |", "|---|---|---|"]
     rep += [f"| {e['name']} | {e['macro']:.3f} | {e['macro_sample']:.3f} |" for e in log]
     rep += ["", f"Chosen: `{json.dumps(best_cfg)}`", "",
-            "## Per letter", "",
-            "Free = argmax over all classes. Target = the app knows the letter: frame passes if p(letter) >= its own threshold.", "",
-            "| letter | frame acc | sample acc | target threshold | target recall | worst false accept |", "|---|---|---|---|---|---|"]
-    rep += [f"| {c} | {r['acc'][c]:.3f} | {r['acc_sample'][c]:.3f} | {per[c]:.2f} | {rec[c]:.3f} | {worst[c][0]} {worst[c][1]:.3f} |" for c in letters]
+            "## Per sign", "",
+            "Free = argmax over all classes. Target = the app knows the sign: frame passes if p(sign) >= its own threshold.",
+            "Shape spread = how much the handshape changes within one sample (high = the sign moves; a static model may not fit).", "",
+            "| sign | frame acc | sample acc | target threshold | target recall | worst false accept | shape spread |", "|---|---|---|---|---|---|---|"]
+    rep += [f"| {c} | {r['acc'][c]:.3f} | {r['acc_sample'][c]:.3f} | {per[c]:.2f} | {rec[c]:.3f} | {worst[c][0]} {worst[c][1]:.3f} | {spread[c]:.3f} |" for c in letters]
     rep += [f"| none | {r['acc']['none']:.3f} | | | | |", "",
             f"Macro: frame {r['macro']:.3f}, sample {r['macro_sample']:.3f}.", "",
             "## Most confused (true -> predicted, frame level)", ""] + [f"- {a} -> {b}: {v:.3f}" for v, a, b in conf]
     rep += ["", f"Free-mode threshold tau = {tau:.3f} (<= 5% of none frames above it, floor 0.70). holdFrames = {HOLD}.",
             "Target thresholds: for every other class, <= 5% of its frames reach the threshold (per frame, before the 8-frame hold).", "",
             f"Golden: {len(gold['cases'])} cases (4 mirrored); JSON forward pass vs sklearn max error {err:.2e}"]
-    open(f"{EXPORT}/letters_report.md", "w", encoding="utf-8").write("\n".join(rep) + "\n")
+    open(f"{EXPORT}/{SET}_report.md", "w", encoding="utf-8").write("\n".join(rep) + "\n")
     print("\n".join(rep), flush=True)
 
     try:
@@ -364,7 +402,7 @@ def main():
         ax.set_yticks(range(len(labs)), labs)
         ax.set_xlabel("predicted")
         ax.set_ylabel("true")
-        fig.savefig(f"{EXPORT}/letters_confusion.png", dpi=110, bbox_inches="tight")
+        fig.savefig(f"{EXPORT}/{SET}_confusion.png", dpi=110, bbox_inches="tight")
     except Exception as e:
         print("no confusion png:", e)
 

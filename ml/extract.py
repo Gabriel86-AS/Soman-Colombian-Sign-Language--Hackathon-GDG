@@ -25,6 +25,7 @@ MODELS = os.environ.get("SOMAN_MODELS", "/content/models")
 
 STATIC = set("ABCDEFIKLMOPQRTUVWXY")
 MOVING = set("GHJNZ") | {"NN"}
+NUMBERS = {"1", "4", "5", "6", "7", "8", "9", "10", "MIL", "MILLON"}  # LSC70 has no 0, 2, 3
 LSC50_MVP = {"GRACIAS", "BUENOS_DIAS", "BUENAS_TARDES", "BUENAS_NOCHES", "BIEN", "HOLA", "ADIOS", "POR_FAVOR"}
 # LSC-54 folder names (ascii, letters only, lowercase) -> canonical label. Chao == ADIOS.
 LSC54_MVP = {"gracias": "GRACIAS", "buenosdias": "BUENOS_DIAS", "buenastardes": "BUENAS_TARDES",
@@ -32,7 +33,7 @@ LSC54_MVP = {"gracias": "GRACIAS", "buenosdias": "BUENOS_DIAS", "buenastardes": 
              "adios": "ADIOS", "porfavor": "POR_FAVOR"}
 
 GROUPS = ["lsc70_static", "lsc54_mvp", "lsc50_mvp", "lsc50_imp", "lsc70_moving", "rest"]
-EXTRA_GROUPS = ["lsc70h_static"]  # Gate 1b: LSC70ANH hand crops padded 120->240 (run explicitly)
+EXTRA_GROUPS = ["lsc70h_static", "lsc70h_numbers"]  # LSC70ANH hand crops padded 120->240 (run explicitly)
 PAD = 60
 HAND_COLS = [f"{a}{i}" for i in range(21) for a in "xyz"]
 POSE_COLS = ["nose_x", "nose_y", "lsh_x", "lsh_y", "rsh_x", "rsh_y"]
@@ -161,7 +162,7 @@ def process(row):
 
 
 def load_rows(groups):
-    m = pd.read_csv(MANIFEST)
+    m = pd.read_csv(MANIFEST, dtype={"label": str})  # digit labels ("1", "10") must stay strings
     m["label"] = m.apply(canon_label, axis=1)
     m["group"] = m.apply(group_of, axis=1)
     # LSC70: one clip = 6 files; keep only k=0 as the clip entry point
@@ -169,8 +170,9 @@ def load_rows(groups):
     m["pose"] = m.group.isin(["lsc54_mvp", "lsc50_mvp", "lsc50_imp"])
     rows = []
     for g in groups:
-        if g == "lsc70h_static":
-            h = m[m.group == "lsc70_static"].copy()
+        if g in ("lsc70h_static", "lsc70h_numbers"):
+            sel = m.group == "lsc70_static" if g == "lsc70h_static" else (m.dataset == "lsc70") & m.label.isin(NUMBERS)
+            h = m[sel].copy()
             h["path"] = h.path.str.replace("LSC70AN/", "LSC70ANH/", regex=False)
             h["dataset"] = "lsc70h"
             h["pose"] = False
