@@ -79,7 +79,7 @@ def fit_scaled(model, Xtr, ytr, aug=True):
 
 
 def cv(X, y, groups, make, aug):
-    oof = np.empty(len(y), dtype=object)
+    oof = np.empty(len(y), dtype=y.dtype)
     probs = None
     for tr, te in GroupKFold(5).split(X, y, groups):
         sc, m = fit_scaled(make(), X[tr], y[tr], aug)
@@ -118,7 +118,7 @@ def main():
     Xl, yl, gl = z["X"], z["label"].astype(str), z["signer"].astype(str)
     Xn, gn = load_none(keep)
     X = np.vstack([Xl, Xn])
-    y = np.r_[yl, np.full(len(Xn), "none")]
+    y = np.r_[yl, np.full(len(Xn), "none")].astype(str)
     g = np.r_[gl, gn]
     letters = sorted(set(yl))
     report = ["# Letter model report", "", f"Frames: {len(Xl)} letters ({len(letters)} classes, 70 signers) + {len(Xn)} none."]
@@ -174,7 +174,7 @@ def main():
     Xd = Xl[np.isin(yl, dropped)]
     Xd = Xd[rng.choice(len(Xd), min(len(Xd), 600), replace=False)] if len(Xd) else Xd
     Xf = np.vstack([Xl[mask_c], Xn, Xd])
-    yf = np.r_[yl[mask_c], np.full(len(Xn) + len(Xd), "none")]
+    yf = np.r_[yl[mask_c], np.full(len(Xn) + len(Xd), "none")].astype(str)
     gf = np.r_[gl[mask_c], gn, np.full(len(Xd), "dropped")]
     oof2, probs2, classes2 = cv(Xf, yf, gf, make_mlp, True)
     acc2 = {l: float((oof2[yf == l] == l).mean()) for l in chosen}
