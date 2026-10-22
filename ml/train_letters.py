@@ -1,152 +1,333 @@
-"""Phase 4: static-letter MLP. Train, choose letters, export letters_mlp.json + golden vectors.
+"""Phase 4 (v2): static-letter MLP on all 20 static letters + none. Compares variants on held-out
+signers, keeps a change only when it helps, exports letters_mlp.json (v2) + golden vectors + report.
 
-    python train_letters.py
+    python train_letters.py            # explore variants, then export the best
+    python train_letters.py --quick    # skip exploring, export the saved best config (runs.json)
 
-Env: SOMAN_OUT (frames dir), SOMAN_QC, SOMAN_FEATS (as build_features.py), SOMAN_EXPORT (default ml/out).
+Env: SOMAN_OUT (frames dir), SOMAN_QC, SOMAN_EXPORT (default ml/out), SOMAN_CACHE (/content/cache).
 """
 import json
 import os
+import sys
+import time
 
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import LogisticRegression
+from joblib import Parallel, delayed
 from sklearn.model_selection import GroupKFold
-from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
 
 import normalize as N
 import sequences as S
-from build_features import FEATS, LETTER_DS, QC
-from extract import OUT
+from extract import OUT, STATIC
+from build_features import QC
 
-EXPORT = os.environ.get("SOMAN_EXPORT", os.path.join(os.path.dirname(os.path.abspath(__file__)), "out"))
-rng = np.random.default_rng(0)
+HERE = os.path.dirname(os.path.abspath(__file__))
+EXPORT = os.environ.get("SOMAN_EXPORT", os.path.join(HERE, "out"))
+CACHE = os.environ.get("SOMAN_CACHE", "/content/cache")
+RUNS = os.path.join(os.path.dirname(OUT.rstrip("/")), "letters_runs.json")
 N_NONE = 2000
-MAX_LETTERS = 12
+HOLD = 8
+BASE = dict(feats="xy", hidden=[128, 64], alpha=1e-4, copies=2, rot=15, aug3d=False, extra=False, seeds=1)
+
+
+# ---------------------------------------------------------------- data
+def _read(ds, keep):
+    path = f"{CACHE}/{ds}.parquet"
+    if not os.path.exists(path):
+        os.makedirs(CACHE, exist_ok=True)
+        t = time.time()
+        pd.read_parquet(os.path.join(OUT, ds)).to_parquet(path)
+        print(f"cached {ds} in {time.time() - t:.0f}s", flush=True)
+    d = pd.read_parquet(path)
+    return d[d.hand_idx >= 0].merge(keep, on=["dataset", "sample_id"]).reset_index(drop=True)
+
+
+def to_points(d):
+    lm = d[S.HAND_COLS].to_numpy(float).reshape(-1, 21, 3)
+    left = (d.handedness == "Left").to_numpy()
+    P = np.empty_like(lm)
+    for (w, h), idx in d.groupby(["img_w", "img_h"]).indices.items():
+        for lf in (False, True):
+            k = idx[left[idx] == lf]
+            if len(k):
+                P[k] = N.hand_points(lm[k], w, h, lf)
+    return P, lm
+
+
+def frame_filter(P, sample_ids):
+    """Same rule as build_features: drop frames > 2x the sample's median distance from its median shape."""
+    X = P[:, 1:, :2].reshape(len(P), -1)
+    dist = np.zeros(len(P))
+    for _, idx in pd.Series(sample_ids).groupby(sample_ids).indices.items():
+        dist[idx] = np.linalg.norm(X[idx] - np.median(X[idx], 0), axis=1)
+    medd = pd.Series(dist).groupby(sample_ids).transform("median").to_numpy()
+    return ~((medd > 0) & (dist > 2 * medd))
+
+
+def load_letters(ds, keep):
+    d = _read(ds, keep)
+    d = d[d.label.isin(STATIC)].reset_index(drop=True)
+    P, lm = to_points(d)
+    ok = frame_filter(P, d.sample_id.to_numpy())
+    d = d[ok].reset_index(drop=True)
+    return dict(P=P[ok], lm=lm[ok], y=d.label.to_numpy(str), g=d.signer.to_numpy(str),
+                sid=d.sample_id.to_numpy(str), w=d.img_w.to_numpy(), h=d.img_h.to_numpy(),
+                hand=d.handedness.to_numpy(str))
 
 
 def load_none(keep):
-    """Per-frame features of hands mid-sign from word clips (LSC50 + LSC-54)."""
-    parts = []
-    for ds in ("lsc50", "lsc54"):
-        d = pd.read_parquet(os.path.join(OUT, ds))
-        d = d[d.hand_idx >= 0].merge(keep, on=["dataset", "sample_id"])
-        parts.append(d)
-    d = pd.concat(parts)
-    # frames from the middle 60% of each clip (mid-sign), not hands entering/leaving
+    """Hands mid-sign (middle 60% of each clip) from LSC50 + LSC-54 word clips."""
+    d = pd.concat([_read(ds, keep) for ds in ("lsc50", "lsc54")]).reset_index(drop=True)
     rel = d.groupby("sample_id").frame.transform(lambda f: (f - f.min()) / max(f.max() - f.min(), 1))
-    d = d[(rel > 0.2) & (rel < 0.8)]
-    d = d.sample(min(N_NONE, len(d)), random_state=0)
-    lm = d[S.HAND_COLS].to_numpy(float).reshape(-1, 21, 3)
-    left = (d.handedness == "Left").to_numpy()
-    X = np.stack([N.handshape(lm[i], d.img_w.iat[i], d.img_h.iat[i], left[i]) for i in range(len(d))])
-    return X, d.signer.to_numpy()
+    d = d[(rel > 0.2) & (rel < 0.8)].sample(N_NONE, random_state=0).reset_index(drop=True)
+    P, _ = to_points(d)
+    return dict(P=P, y=np.full(len(d), "none"), g=d.signer.to_numpy(str),
+                sid=np.array([f"none{i}" for i in range(len(d))]))
 
 
-def augment(X, copies=2):
-    """Rotation +-15 deg, scale +-10%, shear +-0.1, jitter sigma 0.02 palm units."""
-    out = [X]
-    for _ in range(copies):
-        P = X.reshape(len(X), 20, 2)
-        a = np.deg2rad(rng.uniform(-15, 15, len(X)))
-        c, s = np.cos(a), np.sin(a)
-        sc = rng.uniform(0.9, 1.1, len(X))
-        sh = rng.uniform(-0.1, 0.1, len(X))
-        M = np.zeros((len(X), 2, 2))
-        M[:, 0, 0], M[:, 0, 1], M[:, 1, 0], M[:, 1, 1] = c, -s, s, c
-        Sh = np.tile(np.eye(2), (len(X), 1, 1))
-        Sh[:, 0, 1] = sh
-        Q = np.einsum("nij,njk,nlk->nli", M, Sh, P) * sc[:, None, None]
+# ---------------------------------------------------------------- model
+def _rot(yaw, pitch, roll):
+    n = len(yaw)
+    c, s = np.cos, np.sin
+    Ry = np.zeros((n, 3, 3)); Ry[:, 0, 0] = c(yaw); Ry[:, 0, 2] = s(yaw); Ry[:, 1, 1] = 1; Ry[:, 2, 0] = -s(yaw); Ry[:, 2, 2] = c(yaw)
+    Rx = np.zeros((n, 3, 3)); Rx[:, 0, 0] = 1; Rx[:, 1, 1] = c(pitch); Rx[:, 1, 2] = -s(pitch); Rx[:, 2, 1] = s(pitch); Rx[:, 2, 2] = c(pitch)
+    Rz = np.zeros((n, 3, 3)); Rz[:, 0, 0] = c(roll); Rz[:, 0, 1] = -s(roll); Rz[:, 1, 0] = s(roll); Rz[:, 1, 1] = c(roll); Rz[:, 2, 2] = 1
+    return Rz @ Rx @ Ry
+
+
+def augment(P, cfg, rng):
+    """In-plane roll, optional 3D yaw/pitch (viewpoint), aspect +-10%, shear +-0.1, jitter; then
+    re-normalized like hand_points (wrist origin, 2D palm size)."""
+    out = [P]
+    n = len(P)
+    for _ in range(cfg["copies"]):
+        r = np.deg2rad(rng.uniform(-cfg["rot"], cfg["rot"], n))
+        a3 = np.deg2rad(rng.uniform(-15, 15, (2, n))) if cfg["aug3d"] else np.zeros((2, n))
+        Q = np.einsum("nij,nkj->nki", _rot(a3[0], a3[1], r), P)
+        Q[..., 0] = Q[..., 0] * rng.uniform(0.9, 1.1, n)[:, None] + rng.uniform(-0.1, 0.1, n)[:, None] * Q[..., 1]
         Q = Q + rng.normal(0, 0.02, Q.shape)
-        out.append(Q.reshape(len(X), 40))
-    return np.vstack(out)
+        Q = Q - Q[:, :1]
+        out.append(Q / N.palm_size(Q[..., :2])[:, None, None])
+    return np.concatenate(out)
 
 
-def make_mlp():
-    return MLPClassifier(hidden_layer_sizes=(128, 64), early_stopping=True, max_iter=300, random_state=0)
+def fit(cfg, P, y, seed):
+    rng = np.random.default_rng(seed)
+    Pa = augment(P, cfg, rng)
+    X = N.letter_features(Pa, cfg["feats"])
+    cls, yi = np.unique(np.tile(y, len(Pa) // len(P)), return_inverse=True)  # ints: sklearn early stopping
+    sc = StandardScaler().fit(X)
+    m = MLPClassifier(hidden_layer_sizes=tuple(cfg["hidden"]), alpha=cfg["alpha"], early_stopping=True,
+                      max_iter=300, random_state=seed).fit(sc.transform(X), yi)
+    return dict(sc=sc, m=m, cls=cls)
 
 
-def fit_scaled(model, Xtr, ytr, aug=True):
-    """ytr are strings; encoded as ints because sklearn early stopping cannot score string labels."""
-    cls, ytr = np.unique(ytr, return_inverse=True)
-    if aug:
-        n = len(Xtr)
-        Xa = augment(Xtr)
-        ytr = np.tile(ytr, len(Xa) // n)
-        Xtr = Xa
-    sc = StandardScaler().fit(Xtr)
-    model.fit(sc.transform(Xtr), ytr)
-    model.str_classes_ = cls[model.classes_]
-    return sc, model
+def predict(members, P, feats):
+    X = N.letter_features(P, feats)
+    return np.mean([mb["m"].predict_proba(mb["sc"].transform(X)) for mb in members], 0)
 
 
-def cv(X, y, groups, make, aug):
-    oof = np.empty(len(y), dtype=y.dtype)
-    probs = None
-    for tr, te in GroupKFold(5).split(X, y, groups):
-        sc, m = fit_scaled(make(), X[tr], y[tr], aug)
-        p = m.predict_proba(sc.transform(X[te]))
-        if probs is None:
-            probs = np.zeros((len(y), len(m.str_classes_)))
-            classes = m.str_classes_
+def cv(cfg, D, extra):
+    folds = list(GroupKFold(5).split(D["P"], D["y"], D["g"]))
+
+    def run(tr, te):
+        P, y = D["P"][tr], D["y"][tr]
+        if cfg["extra"]:  # full-frame LSC70 landmarks of training signers only
+            k = np.isin(extra["g"], np.unique(D["g"][tr]))
+            P, y = np.concatenate([P, extra["P"][k]]), np.r_[y, extra["y"][k]]
+        members = [fit(cfg, P, y, s) for s in range(cfg["seeds"])]
+        return te, predict(members, D["P"][te], cfg["feats"])
+
+    probs = np.zeros((len(D["y"]), len(np.unique(D["y"]))))
+    for te, p in Parallel(n_jobs=-1)(delayed(run)(tr, te) for tr, te in folds):
         probs[te] = p
-        oof[te] = m.str_classes_[p.argmax(1)]
-    return oof, probs, classes
+    return probs
 
 
-def choose(letters, acc, conf):
-    """Accuracy >= 0.90, then drop the weaker letter of any pair confused > 10%; keep the best 12."""
-    keep = [l for l in letters if acc[l] >= 0.90]
-    changed = True
-    while changed:
-        changed = False
-        for a in keep:
-            for b in keep:
-                if a != b and conf.get((a, b), 0) > 0.10:
-                    keep.remove(a if acc[a] <= acc[b] else b)
-                    changed = True
-                    break
-            if changed:
-                break
-    return sorted(sorted(keep, key=lambda l: -acc[l])[:MAX_LETTERS])
+def score(probs, D, classes):
+    y = D["y"]
+    pred = classes[probs.argmax(1)]
+    acc = {c: float((pred[y == c] == c).mean()) for c in classes}
+    # sample level (letters): average the frames of one sample, like the app averaging over time
+    df = pd.DataFrame(probs).assign(sid=D["sid"], y=y)
+    ps = df.groupby("sid").mean(numeric_only=True)
+    ys = df.groupby("sid").y.first().loc[ps.index].to_numpy()
+    ps_pred = classes[ps.to_numpy().argmax(1)]
+    acc_s = {c: float((ps_pred[ys == c] == c).mean()) for c in classes if c != "none"}
+    return dict(macro=float(np.mean(list(acc.values()))), acc=acc, acc_sample=acc_s,
+                macro_sample=float(np.mean(list(acc_s.values()))), pred=pred, probs=probs)
 
 
+def thresholds(probs, y, classes):
+    """Free mode: tau so <= 5% of none frames have a letter prob above it (floor 0.70).
+    Target mode (the app knows the letter): per letter, tau_l so <= 5% of frames that are NOT that
+    letter (other letters + none) reach p_l >= tau_l; clipped to [0.30, 0.95]."""
+    ni = list(classes).index("none")
+    tau = float(max(0.70, np.percentile(np.delete(probs[y == "none"], ni, 1).max(1), 95)))
+    per, rec = {}, {}
+    for i, c in enumerate(classes):
+        if c == "none":
+            continue
+        t = float(np.clip(np.percentile(probs[y != c, i], 95), 0.30, 0.95))
+        per[c], rec[c] = round(t, 4), float((probs[y == c, i] >= t).mean())
+    return tau, per, rec
+
+
+# ---------------------------------------------------------------- export
+def to_json(members, feats, tau, per):
+    cls = list(members[0]["cls"])
+    labels = ["none"] + [c for c in cls if c != "none"]
+    out = []
+    for mb in members:
+        m = mb["m"]
+        order = [cls.index(l) for l in labels]
+        layers = [dict(W=m.coefs_[i].T.tolist(), b=m.intercepts_[i].tolist(), act="relu") for i in range(len(m.coefs_) - 1)]
+        layers.append(dict(W=m.coefs_[-1][:, order].T.tolist(), b=m.intercepts_[-1][order].tolist(), act="softmax"))
+        out.append(dict(mean=mb["sc"].mean_.tolist(), std=mb["sc"].scale_.tolist(), layers=layers))
+    # W is [out][in]: y[o] = sum_i W[o][i]*x[i] + b[o]. Final probs = mean of the members' softmax.
+    return dict(version=2, points="hand_points_v1", features=feats, labels=labels, members=out,
+                threshold=tau, thresholds=per, holdFrames=HOLD)
+
+
+def forward(model, f):
+    ps = []
+    for mb in model["members"]:
+        x = (np.asarray(f) - mb["mean"]) / mb["std"]
+        for L in mb["layers"]:
+            x = np.asarray(L["W"]) @ x + np.asarray(L["b"])
+            if L["act"] == "relu":
+                x = np.maximum(x, 0)
+            else:
+                e = np.exp(x - x.max())
+                x = e / e.sum()
+        ps.append(x)
+    return np.mean(ps, 0)
+
+
+def golden(model, D, members, feats):
+    rng = np.random.default_rng(1)
+    idx = []
+    for c in sorted(set(D["y"]) - {"none"}):
+        idx.append(rng.choice(np.where(D["y"] == c)[0]))
+    cases = [dict(landmarks=D["lm"][i].tolist(), img_w=int(D["w"][i]), img_h=int(D["h"][i]), handedness=D["hand"][i])
+             for i in idx]
+    for c in cases[:4]:  # phone-mirrored copies: must give the same features
+        lm = np.array(c["landmarks"]); lm[:, 0] = 1 - lm[:, 0]
+        cases.append(dict(landmarks=lm.tolist(), img_w=c["img_w"], img_h=c["img_h"],
+                          handedness="Left" if c["handedness"] == "Right" else "Right"))
+    for c in cases:
+        p = N.hand_points(np.array(c["landmarks"]), c["img_w"], c["img_h"], c["handedness"] == "Left")
+        c["points"] = p.tolist()
+        c["features"] = N.letter_features(p, feats).tolist()
+        c["probs"] = forward(model, c["features"]).tolist()
+    cls = list(members[0]["cls"])
+    order = [cls.index(l) for l in model["labels"]]
+    sk = predict(members, np.array([c["points"] for c in cases]), feats)[:, order]
+    err = float(np.abs(sk - np.array([c["probs"] for c in cases])).max())
+    return dict(tolerance=1e-4, points="hand_points_v1", features=feats, labels=model["labels"], cases=cases), err
+
+
+# ---------------------------------------------------------------- main
 def main():
-    os.makedirs(EXPORT, exist_ok=True)
+    quick = "--quick" in sys.argv
     os.makedirs(f"{EXPORT}/golden", exist_ok=True)
-    z = np.load(f"{FEATS}/letters.npz", allow_pickle=True)
     keep = pd.read_csv(f"{QC}/clips.csv")
     keep = keep[keep.keep][["dataset", "sample_id"]]
-    Xl, yl, gl = z["X"], z["label"].astype(str), z["signer"].astype(str)
-    Xn, gn = load_none(keep)
-    X = np.vstack([Xl, Xn])
-    y = np.r_[yl, np.full(len(Xn), "none")].astype(str)
-    g = np.r_[gl, gn]
-    letters = sorted(set(yl))
-    report = ["# Letter model report", "", f"Frames: {len(Xl)} letters ({len(letters)} classes, 70 signers) + {len(Xn)} none."]
+    L = load_letters("lsc70h", keep)
+    Nn = load_none(keep)
+    D = {k: np.concatenate([L[k], Nn[k]]) for k in ("P", "y", "g", "sid")}
+    classes = np.unique(D["y"])
+    print(f"letters {len(L['y'])} frames ({len(set(L['y']))} classes, {len(set(L['g']))} signers), none {len(Nn['y'])}", flush=True)
+    extra = None
 
-    # baselines (no augmentation) and MLP (augmented), signer-grouped 5-fold
-    base = {}
-    for name, mk, aug in (("kNN k=5", lambda: KNeighborsClassifier(5), False),
-                          ("logreg", lambda: LogisticRegression(max_iter=500), False),
-                          ("MLP (128,64) + aug", make_mlp, True)):
-        oof, probs, classes = cv(X, y, g, mk, aug)
-        base[name] = float((oof == y).mean())
-        print(name, base[name], flush=True)
-        last = (oof, probs, classes)
-    oof, probs, classes = last
-    report += ["", "## Held-out-signer accuracy (all frames)", ""] + [f"- {k}: {v:.3f}" for k, v in base.items()]
+    saved = json.load(open(RUNS)) if os.path.exists(RUNS) else dict(trials=[], chosen=None)
+    log = []
 
-    acc = {l: float((oof[y == l] == l).mean()) for l in letters}
-    conf = {}
-    for a in letters:
-        for b in set(letters) | {"none"}:
-            if a != b:
-                conf[(a, b)] = float((oof[y == a] == b).mean())
-    pairs = sorted(((v, a, b) for (a, b), v in conf.items() if v > 0.02), reverse=True)[:10]
-    report += ["", "## Per-letter accuracy (MLP, held-out signers)", ""] + [f"- {l}: {acc[l]:.3f}" for l in letters]
-    report += ["", "## Most confused (true -> predicted)", ""] + [f"- {a} -> {b}: {v:.3f}" for v, a, b in pairs]
+    def load_extra():
+        nonlocal extra
+        if extra is None:
+            E = load_letters("lsc70", keep)
+            extra = dict(P=E["P"], y=E["y"], g=E["g"])
+            print(f"extra full-frame lsc70: {len(E['y'])} frames", flush=True)
+
+    def trial(name, cfg):
+        if cfg["extra"]:
+            load_extra()
+        t = time.time()
+        r = score(cv(cfg, D, extra), D, classes)
+        log.append(dict(name=name, cfg=cfg, macro=r["macro"], macro_sample=r["macro_sample"]))
+        saved["trials"].append(log[-1])
+        json.dump(saved, open(RUNS, "w"), indent=1)
+        print(f"{name:28s} macro {r['macro']:.4f}  sample {r['macro_sample']:.4f}  ({time.time() - t:.0f}s)", flush=True)
+        return r
+
+    if quick:
+        best_cfg = saved["chosen"] or dict(BASE)
+        best = trial("chosen (rerun)", best_cfg)
+        log = [e for e in saved["trials"] if e["name"] != "chosen (rerun)"] + log[-1:]
+    else:
+        # stage 1: features (simplest first; a richer set must win by >= 1 point: more Dart code)
+        best_cfg, best = dict(BASE), trial("feats=xy", dict(BASE))
+        for f in ("xy+z", "xy+geo", "xy+z+geo3"):
+            cfg = dict(BASE, feats=f)
+            r = trial(f"feats={f}", cfg)
+            if r["macro"] >= best["macro"] + 0.01:
+                best_cfg, best = cfg, r
+        # stage 2: model and data, greedy, keep a change if it adds >= 0.5 point
+        for name, change in (("wider (256,128) a=1e-3", dict(hidden=[256, 128], alpha=1e-3)),
+                             ("aug x4 rot 25", dict(copies=4, rot=25)),
+                             ("aug 3D viewpoint", dict(aug3d=True)),
+                             ("+full-frame LSC70", dict(extra=True))):
+            cfg = dict(best_cfg, **change)
+            r = trial(name, cfg)
+            if r["macro"] >= best["macro"] + 0.005:
+                best_cfg, best = cfg, r
+        # stage 3: 5-model ensemble (5x the app compute, still tiny); keep if >= 1 point
+        cfg = dict(best_cfg, seeds=5)
+        r = trial("ensemble x5", cfg)
+        if r["macro"] >= best["macro"] + 0.01:
+            best_cfg, best = cfg, r
+    print("best config:", best_cfg, flush=True)
+    saved["chosen"] = best_cfg
+    json.dump(saved, open(RUNS, "w"), indent=1)
+
+    # final: held-out results of the chosen config give the report + thresholds; then fit on everyone
+    r = best
+    tau, per, rec = thresholds(r["probs"], D["y"], classes)
+    P, y = D["P"], D["y"]
+    if best_cfg["extra"]:
+        load_extra()
+        P, y = np.concatenate([P, extra["P"]]), np.r_[y, extra["y"]]
+    members = Parallel(n_jobs=-1)(delayed(fit)(best_cfg, P, y, s) for s in range(best_cfg["seeds"]))
+    model = to_json(members, best_cfg["feats"], tau, per)
+    json.dump(model, open(f"{EXPORT}/letters_mlp.json", "w"))
+    gold, err = golden(model, L, members, best_cfg["feats"])
+    json.dump(gold, open(f"{EXPORT}/golden/letters.json", "w"))
+
+    letters = [c for c in classes if c != "none"]
+    y = D["y"]
+    conf = sorted(((float((r["pred"][y == a] == b).mean()), a, b) for a in letters for b in classes if a != b), reverse=True)[:12]
+    rep = ["# Letter model report (v2)", "",
+           f"Frames: {len(L['y'])} letter frames (20 static letters, 70 signers, LSC70ANH crops) + {len(Nn['y'])} none frames.",
+           "All numbers are on held-out signers (GroupKFold 5 by signer).", "",
+           "## Variants tried (macro accuracy over 20 letters + none, frame level / sample level)", "",
+           "| variant | frame | sample |", "|---|---|---|"]
+    rep += [f"| {e['name']} | {e['macro']:.3f} | {e['macro_sample']:.3f} |" for e in log]
+    rep += ["", f"Chosen: `{json.dumps(best_cfg)}`", "",
+            "## Per letter", "",
+            "Free = argmax over all classes. Target = the app knows the letter: frame passes if p(letter) >= its own threshold.", "",
+            "| letter | frame acc | sample acc | target threshold | target recall |", "|---|---|---|---|---|"]
+    rep += [f"| {c} | {r['acc'][c]:.3f} | {r['acc_sample'][c]:.3f} | {per[c]:.2f} | {rec[c]:.3f} |" for c in letters]
+    rep += [f"| none | {r['acc']['none']:.3f} | | | |", "",
+            f"Macro: frame {r['macro']:.3f}, sample {r['macro_sample']:.3f}.", "",
+            "## Most confused (true -> predicted, frame level)", ""] + [f"- {a} -> {b}: {v:.3f}" for v, a, b in conf]
+    rep += ["", f"Free-mode threshold tau = {tau:.3f} (<= 5% of none frames above it, floor 0.70). holdFrames = {HOLD}.",
+            "Target thresholds: <= 5% of frames of other letters or none reach them (per frame, before the hold).", "",
+            f"Golden: {len(gold['cases'])} cases (4 mirrored); JSON forward pass vs sklearn max error {err:.2e}"]
+    open(f"{EXPORT}/letters_report.md", "w", encoding="utf-8").write("\n".join(rep) + "\n")
+    print("\n".join(rep), flush=True)
 
     try:
         import matplotlib
@@ -154,9 +335,14 @@ def main():
         import matplotlib.pyplot as plt
         from sklearn.metrics import confusion_matrix
         labs = letters + ["none"]
-        cm = confusion_matrix(y, oof, labels=labs, normalize="true")
-        fig, ax = plt.subplots(figsize=(9, 9))
-        ax.imshow(cm, cmap="Blues")
+        cm = confusion_matrix(y, r["pred"], labels=labs, normalize="true")
+        fig, ax = plt.subplots(figsize=(10, 10))
+        ax.imshow(cm, cmap="Blues", vmax=1)
+        for i in range(len(labs)):
+            for j in range(len(labs)):
+                if cm[i, j] >= 0.03:
+                    ax.text(j, i, f"{cm[i, j]:.2f}"[1:], ha="center", va="center", fontsize=7,
+                            color="white" if cm[i, j] > 0.5 else "black")
         ax.set_xticks(range(len(labs)), labs)
         ax.set_yticks(range(len(labs)), labs)
         ax.set_xlabel("predicted")
@@ -164,78 +350,6 @@ def main():
         fig.savefig(f"{EXPORT}/letters_confusion.png", dpi=110, bbox_inches="tight")
     except Exception as e:
         print("no confusion png:", e)
-
-    chosen = choose(letters, acc, conf)
-    n90 = sum(a >= 0.90 for a in acc.values())
-    report += ["", f"Letters at >= 90%: {n90} of {len(letters)}. **Gate 2 (>= 8): {'PASS' if n90 >= 8 else 'FAIL'}**",
-               f"Chosen MVP letters ({len(chosen)}): {' '.join(chosen)}"]
-    print("chosen", chosen, flush=True)
-
-    # final set: chosen letters + none (dropped letters go into none, subsampled)
-    dropped = [l for l in letters if l not in chosen]
-    mask_c = np.isin(yl, chosen)
-    Xd = Xl[np.isin(yl, dropped)]
-    Xd = Xd[rng.choice(len(Xd), min(len(Xd), 600), replace=False)] if len(Xd) else Xd
-    Xf = np.vstack([Xl[mask_c], Xn, Xd])
-    yf = np.r_[yl[mask_c], np.full(len(Xn) + len(Xd), "none")].astype(str)
-    gf = np.r_[gl[mask_c], gn, np.full(len(Xd), "dropped")]
-    oof2, probs2, classes2 = cv(Xf, yf, gf, make_mlp, True)
-    acc2 = {l: float((oof2[yf == l] == l).mean()) for l in chosen}
-    report += ["", "## Final set, held-out signers", ""] + [f"- {l}: {acc2[l]:.3f}" for l in chosen]
-    report += [f"- none: {float((oof2[yf == 'none'] == 'none').mean()):.3f}"]
-    ni = list(classes2).index("none")
-    nonenone = np.delete(probs2[yf == "none"], ni, axis=1).max(1)
-    tau = float(max(0.70, np.percentile(nonenone, 95)))
-    report += ["", f"Threshold tau = {tau:.3f} (<= 5% of none frames above it; floor 0.70). holdFrames = 8."]
-
-    sc, m = fit_scaled(make_mlp(), Xf, yf, True)
-    labels = list(m.str_classes_)
-    labels = ["none"] + [l for l in labels if l != "none"]
-    order = [list(m.str_classes_).index(l) for l in labels]
-    Wout = m.coefs_[-1][:, order]
-    bout = m.intercepts_[-1][order]
-    layers = [dict(W=m.coefs_[i].T.tolist(), b=m.intercepts_[i].tolist(), act="relu") for i in range(len(m.coefs_) - 1)]
-    layers.append(dict(W=Wout.T.tolist(), b=bout.tolist(), act="softmax"))
-    # W is stored [out][in] so Dart does y[o] = sum_i W[o][i]*x[i] + b[o]
-    json.dump(dict(version=1, features="xy_1to20_v1", labels=labels, mean=sc.mean_.tolist(),
-                   std=sc.scale_.tolist(), layers=layers, threshold=tau, holdFrames=8),
-              open(f"{EXPORT}/letters_mlp.json", "w"))
-
-    # golden vectors: raw landmarks -> features -> probabilities, using the exported JSON only
-    model = json.load(open(f"{EXPORT}/letters_mlp.json"))
-    d = pd.concat([pd.read_parquet(os.path.join(OUT, LETTER_DS), filters=[("label", "in", chosen)])])
-    d = d[d.hand_idx >= 0].sample(16, random_state=1)
-    cases = []
-    for _, r in d.iterrows():
-        lm = r[S.HAND_COLS].to_numpy(float).reshape(21, 3)
-        cases.append(dict(landmarks=lm.tolist(), img_w=int(r.img_w), img_h=int(r.img_h), handedness=r.handedness))
-    for c in cases[:4]:  # phone-mirrored versions of 4 cases: must give the same features
-        lm = np.array(c["landmarks"])
-        lm[:, 0] = 1 - lm[:, 0]
-        cases.append(dict(landmarks=lm.tolist(), img_w=c["img_w"], img_h=c["img_h"],
-                          handedness="Left" if c["handedness"] == "Right" else "Right"))
-    for c in cases:
-        f = N.handshape(np.array(c["landmarks"]), c["img_w"], c["img_h"], c["handedness"] == "Left")
-        c["features"] = f.tolist()
-        c["probs"] = forward(model, f).tolist()
-    json.dump(dict(tolerance=1e-4, labels=model["labels"], cases=cases), open(f"{EXPORT}/golden/letters.json", "w"))
-    sk = m.predict_proba(sc.transform(np.array([c["features"] for c in cases])))[:, order]
-    err = np.abs(sk - np.array([c["probs"] for c in cases])).max()
-    report += ["", f"Golden: {len(cases)} cases (4 mirrored); JSON forward pass vs sklearn max error {err:.2e}"]
-    open(f"{EXPORT}/letters_report.md", "w", encoding="utf-8").write("\n".join(report) + "\n")
-    print("\n".join(report))
-
-
-def forward(model, f):
-    x = (np.asarray(f) - model["mean"]) / model["std"]
-    for L in model["layers"]:
-        x = np.asarray(L["W"]) @ x + np.asarray(L["b"])
-        if L["act"] == "relu":
-            x = np.maximum(x, 0)
-        else:
-            e = np.exp(x - x.max())
-            x = e / e.sum()
-    return x
 
 
 if __name__ == "__main__":

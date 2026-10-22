@@ -1,10 +1,14 @@
-"""Live webcam demo of the letter model (A B D I K M Q R U V W X).
+"""Live webcam demo of the letter model (out/letters_mlp.json, format v2).
 
-    python demo_letters.py [camera_index]      # q or Esc to quit
+    python demo_letters.py [camera_index]
+
+Keys: a letter key = target mode for that letter (like the app: "is this the letter I asked for?"),
+Space = free mode (guess any letter), Esc = quit.
 
 Same pipeline as training: HandLandmarker finds the hand, the frame is cropped around it (like the
 LSC70ANH crops, padded 120 -> 240 with gray), HandLandmarker runs again on the crop, then
-normalize.handshape -> out/letters_mlp.json. Needs mediapipe + opencv (Python 3.9-3.12).
+normalize.hand_points -> letter_features -> MLP. If the crop pass loses the hand, the full-frame
+landmarks are used. Needs mediapipe + opencv (Python 3.9-3.12).
 """
 import json
 import os
@@ -25,24 +29,31 @@ URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_land
 CONN = [(0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8), (5, 9), (9, 10), (10, 11),
         (11, 12), (9, 13), (13, 14), (14, 15), (15, 16), (13, 17), (17, 18), (18, 19), (19, 20), (0, 17)]
 PAD, CROP, MARGIN = 60, 120, 1.25  # crop side = MARGIN * hand box; LSC70ANH hands fill their 120 px crop
+ALPHA = 0.4  # probability smoothing across frames (one bad frame does not break the hold)
 
 
 def forward(model, f):
-    x = (np.asarray(f) - model["mean"]) / model["std"]
-    for L in model["layers"]:
-        x = np.asarray(L["W"]) @ x + np.asarray(L["b"])
-        if L["act"] == "relu":
-            x = np.maximum(x, 0)
-        else:
-            e = np.exp(x - x.max())
-            x = e / e.sum()
-    return x
+    """Mean of the members' softmax outputs (one member unless the model is an ensemble)."""
+    ps = []
+    for mb in model["members"]:
+        x = (np.asarray(f) - mb["mean"]) / mb["std"]
+        for L in mb["layers"]:
+            x = np.asarray(L["W"]) @ x + np.asarray(L["b"])
+            if L["act"] == "relu":
+                x = np.maximum(x, 0)
+            else:
+                e = np.exp(x - x.max())
+                x = e / e.sum()
+        ps.append(x)
+    return np.mean(ps, 0)
 
 
 def landmarker(running_mode, conf):
+    # low thresholds: webcams are darker/blurrier than the dataset, keep tracking through hard frames
     return vision.HandLandmarker.create_from_options(vision.HandLandmarkerOptions(
         base_options=mpt.BaseOptions(model_asset_path=MODEL_PATH), running_mode=running_mode,
-        num_hands=1, min_hand_detection_confidence=conf, min_tracking_confidence=0.5))
+        num_hands=1, min_hand_detection_confidence=conf, min_hand_presence_confidence=conf,
+        min_tracking_confidence=conf))
 
 
 def square_crop(rgb, lm):
@@ -67,11 +78,16 @@ def main():
         print("downloading hand_landmarker.task ...")
         urllib.request.urlretrieve(URL, MODEL_PATH)
     model = json.load(open(os.path.join(HERE, "out", "letters_mlp.json")))
-    labels, tau, hold = model["labels"], model["threshold"], model["holdFrames"]
-    find = landmarker(vision.RunningMode.VIDEO, 0.5)
+    if model.get("version") != 2:
+        sys.exit("out/letters_mlp.json is not format v2: run train_letters.py and copy its output")
+    labels, tau, per, hold, spec = model["labels"], model["threshold"], model["thresholds"], model["holdFrames"], model["features"]
+    print("letters:", " ".join(labels[1:]))
+    find = landmarker(vision.RunningMode.VIDEO, 0.3)
     refine = landmarker(vision.RunningMode.IMAGE, 0.3)
     cap = cv2.VideoCapture(int(sys.argv[1]) if len(sys.argv) > 1 else 0)
-    t0, last_t, streak, cand, shown = 0, -1, 0, None, ""
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)  # more pixels on the hand -> steadier landmarks
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    last_t, streak, cand, shown, avg, target = -1, 0, None, "", None, None
     while True:
         ok, bgr = cap.read()
         if not ok:
@@ -81,10 +97,9 @@ def main():
         last_t = t
         res = find.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), t)
         view, crop_view, text = bgr.copy(), np.full((240, 240, 3), 114, np.uint8), "no hand"
-        best, p = None, 0.0
+        hh, ww = view.shape[:2]
         if res.hand_landmarks:
-            lm = np.array([[q.x, q.y] for q in res.hand_landmarks[0]])
-            hh, ww = view.shape[:2]
+            lm = np.array([[q.x, q.y, q.z] for q in res.hand_landmarks[0]])
             for a, b in CONN:
                 cv2.line(view, (int(lm[a, 0] * ww), int(lm[a, 1] * hh)), (int(lm[b, 0] * ww), int(lm[b, 1] * hh)), (0, 255, 0), 2)
             crop = square_crop(rgb, lm)
@@ -95,28 +110,53 @@ def main():
                 left = r2.handedness[0][0].category_name == "Left"
                 for a, b in CONN:
                     cv2.line(crop_view, (int(lm2[a, 0] * 240), int(lm2[a, 1] * 240)), (int(lm2[b, 0] * 240), int(lm2[b, 1] * 240)), (0, 255, 0), 1)
-                probs = forward(model, N.handshape(lm2, 240, 240, left))
-                i = int(probs.argmax())
-                best, p = labels[i], float(probs[i])
-                text = f"{best if best != 'none' else '-'}  {p:.2f}"
-        crop_bgr = cv2.cvtColor(crop_view, cv2.COLOR_RGB2BGR) if res.hand_landmarks else crop_view
-        # a letter counts after `hold` frames above the threshold
-        if best and best != "none" and p >= tau:
-            streak = streak + 1 if best == cand else 1
-            cand = best
+                pts, src = N.hand_points(lm2, 240, 240, left), "crop"
+            else:
+                # crop pass lost the hand: use the full-frame landmarks (features are scale-free)
+                left = res.handedness[0][0].category_name == "Left"
+                pts, src = N.hand_points(lm, ww, hh, left), "full"
+            probs = forward(model, N.letter_features(pts, spec))
+            avg = probs if avg is None else ALPHA * probs + (1 - ALPHA) * avg
+        else:
+            avg = None
+
+        # decide: target mode = p(target) over its own threshold; free mode = argmax over tau
+        if avg is None:
+            hit = None
+        elif target:
+            pt = float(avg[labels.index(target)])
+            i = int(avg.argmax())
+            text = f"{target}: {pt:.2f} / {per[target]:.2f}   (top {labels[i]} {avg[i]:.2f}, {src})"
+            hit = target if pt >= per[target] else None
+        else:
+            i = int(avg.argmax())
+            text = f"{labels[i] if labels[i] != 'none' else '-'}  {avg[i]:.2f}  ({src})"
+            hit = labels[i] if labels[i] != "none" and avg[i] >= tau else None
+        if hit:
+            streak = streak + 1 if hit == cand else 1
+            cand = hit
             if streak >= hold:
-                shown = best
+                shown = hit
         else:
             streak, cand = 0, None
-            if best is None or best == "none":
-                shown = shown if best is None else ""
-        cv2.putText(view, text, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.1, (0, 255, 255), 2)
-        cv2.putText(view, f"letter: {shown}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 1.6, (0, 200, 0), 3)
-        cv2.putText(view, "hold your hand close; q = quit", (10, view.shape[0] - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-        view[10:250, view.shape[1] - 250:view.shape[1] - 10] = crop_bgr
+            if avg is not None:
+                shown = ""
+
+        crop_bgr = cv2.cvtColor(crop_view, cv2.COLOR_RGB2BGR) if res.hand_landmarks else crop_view
+        mode = f"target {target}" if target else "free"
+        cv2.putText(view, text, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2)
+        cv2.putText(view, f"{'OK ' if target and shown else ''}letter: {shown}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 1.6, (0, 200, 0), 3)
+        cv2.putText(view, f"mode: {mode} | letter key = target, Space = free, Esc = quit", (10, hh - 12),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+        view[10:250, ww - 250:ww - 10] = crop_bgr
         cv2.imshow("Soman letters demo", view)
-        if cv2.waitKey(1) & 0xFF in (27, ord("q")):
+        k = cv2.waitKey(1) & 0xFF
+        if k == 27:
             break
+        if k == ord(" "):
+            target, shown = None, ""
+        elif chr(k).upper() in labels[1:]:
+            target, shown = chr(k).upper(), ""
     cap.release()
     cv2.destroyAllWindows()
 
