@@ -86,6 +86,13 @@ Same process as letters v2, run with `python extract.py lsc70h_numbers` (694 LSC
 - Team per sign: 1 0.90, 2 0.71, 3 **0.43**, 4 0.79, 5 0.68. aris is the hardest signer (2/3/5 ~0.3-0.5); santiago the easiest.
 - Main confusions: **3 -> 8 (35%)**, 6 -> 1 (21%), 2 -> 7 (14%). More 3s from more people are the next fix.
 
+## Numbers 1-5 only (2026-10-22, current `numbers_mlp.json`)
+The intended model is numbers 1-5, so the 12-number one above is replaced. `python train_letters.py --set numbers --custom --only 1,2,3,4,5` (full variant search): LSC70 1/4/5 + team 1-5 + none, 73 signers, 2,249 number frames.
+- Chosen: xy, (128,64), aug x4 rot 25 (0.904 vs base 0.883). Held-out macro **0.904 frame / 0.910 sample**; LSC70 + none 0.965; team captures 0.862.
+- Per sign (all): 1 0.98, 2 0.89, 3 0.78, 4 0.96, 5 0.87, none 0.95. Team: 1 1.00, 2 0.89, 3 0.78, 4 0.92, 5 0.72 (gabriel's 5 0.49).
+- Errors are now mostly "sign -> none" (5 13%, 3 13%, 2 10%), not number swaps; 3 -> 4 6%.
+- Demo: `ml/demo_numbers_team/` (frozen copy of this model).
+
 # Notes (phase 5)
 
 Words with kNN-DTW (`dtw.py`, `words_dtw.py`; Colab, 2026-10-21). Signer-held-out 5 folds over 23 signers (LSC50 persons spread one per fold), k=5, band 3 of 30 samples (10%), cost = sum of frame distances / path length.

@@ -1,13 +1,13 @@
-"""Live webcam demo of the numbers model retrained with our team captures (2026-10-22).
+"""Live webcam demo of the numbers 1-5 model trained with our team captures (2026-10-22).
 
     python demo.py [camera_index]
     python demo.py --check      # no camera: check the model against its golden cases
 
 Uses its own frozen copy of the model (model/numbers_mlp.json), so retraining ml/out does not change it.
-12 numbers: 1-10, MIL, MILLON (2 and 3 learned only from our captures) + none.
+Classes: 1 2 3 4 5 + none (2 and 3 learned only from our captures).
 
 Keys (target mode, like the app: "is this the number I asked for?"):
-    1-9 = that number, 0 = 10, M = MIL, N = MILLON, Space = free mode (guess any), Esc = quit.
+    1-5 = that number, Space = free mode (guess any), Esc = quit.
 
 Pipeline = training: HandLandmarker on the frame -> crop around the hand (LSC70ANH look) ->
 HandLandmarker on the crop -> normalize.hand_points -> letter_features -> MLP. Falls back to the
@@ -201,7 +201,8 @@ def main():
         cv2.putText(view, big, (10, 95), cv2.FONT_HERSHEY_SIMPLEX, 1.6, (0, 200, 0), 3)
         if not shown and streak:
             cv2.rectangle(view, (10, 110), (10 + int(300 * streak / hold), 122), (0, 200, 0), -1)
-        cv2.putText(view, f"mode: {mode} | 1-9, 0=10, M=MIL, N=MILLON | Space = free, Esc = quit", (10, hh - 12),
+        keys = "1-5" if len(labels) <= 6 else "1-9, 0=10, M=MIL, N=MILLON"
+        cv2.putText(view, f"mode: {mode} | {keys} | Space = free, Esc = quit", (10, hh - 12),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
         frame = np.hstack([view, draw_panel(cv2, hh, labels, avg, target, per, tau, crop_view)])
         cv2.imshow("Soman numbers demo (team model)", frame)

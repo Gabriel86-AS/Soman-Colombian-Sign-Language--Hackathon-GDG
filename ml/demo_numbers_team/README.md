@@ -1,6 +1,6 @@
-# Numbers demo (team model)
+# Numbers demo (team model, 1-5)
 
-Live webcam demo of the numbers model retrained on 2026-10-22 with our own captures (aris, gabriel, santiago). It has 12 numbers: 1-10, MIL, MILLON. 2 and 3 come only from our captures.
+Live webcam demo of the numbers 1-5 model, trained on 2026-10-22 with our own captures (aris, gabriel, santiago) plus the LSC70 signers for 1, 4 and 5. 2 and 3 come only from our captures.
 
 The model is a frozen copy in `model/`, so retraining `ml/out/` does not change this demo. The original demo (`ml/demo_numbers/`) always uses the latest `ml/out/`.
 
@@ -16,7 +16,7 @@ Double-click `run.bat`, or from the `ml/` folder:
 
 ## Keys
 
-`1`-`9` = check that number, `0` = 10, `M` = MIL, `N` = MILLON, Space = free mode (guess any), Esc = quit.
+`1`-`5` = check that number, Space = free mode (guess any), Esc = quit.
 
 ## Screen
 
@@ -26,7 +26,6 @@ Double-click `run.bat`, or from the `ml/` folder:
 ## Tips
 
 - Hold the hand close to the camera (the model was trained on hand crops).
-- Weak spots: 3 is often read as 8, 6 and 1 get mixed up, 2 sometimes reads as 7.
-- 10, MIL and MILLON move: hold the final shape.
+- Weak spots: 3 and 5 sometimes read as "no sign"; hold them steady and clear.
 
-Held-out scores (people not seen in training): all numbers 0.81 per frame; our captures 0.70 (1 0.90, 2 0.71, 3 0.43, 4 0.79, 5 0.68).
+Held-out scores (people not seen in training): 0.90 per frame overall; our captures 0.86 (1 1.00, 2 0.89, 3 0.78, 4 0.92, 5 0.72).
