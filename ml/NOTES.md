@@ -80,6 +80,12 @@ Same process as letters v2, run with `python extract.py lsc70h_numbers` (694 LSC
 - Golden: 14 cases (4 mirrored), JSON vs sklearn max error 3.2e-6.
 - `test_letters_v2.py` golden check loosened to 1e-5 (weights are rounded to 6 decimals since v2; it failed at 1e-9).
 
+## Retrain with team captures (2026-10-22)
+`python train_letters.py --set numbers --custom --quick`, adding 1,250 frames from 3 team signers (aris_p3, gabriel_p1, santiago_p2; numbers 1-5) as their own signer groups. The exported `numbers_mlp.json` now has 12 numbers (adds 2 and 3, only from our captures) + none, 73 signers, 1 MLP (128,64), xy features.
+- Held-out macro 0.809 frame / 0.852 sample. Team captures (each person held out) 0.704; LSC70 + none 0.865.
+- Team per sign: 1 0.90, 2 0.71, 3 **0.43**, 4 0.79, 5 0.68. aris is the hardest signer (2/3/5 ~0.3-0.5); santiago the easiest.
+- Main confusions: **3 -> 8 (35%)**, 6 -> 1 (21%), 2 -> 7 (14%). More 3s from more people are the next fix.
+
 # Notes (phase 5)
 
 Words with kNN-DTW (`dtw.py`, `words_dtw.py`; Colab, 2026-10-21). Signer-held-out 5 folds over 23 signers (LSC50 persons spread one per fold), k=5, band 3 of 30 samples (10%), cost = sum of frame distances / path length.

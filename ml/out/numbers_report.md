@@ -1,23 +1,24 @@
 # Numbers model report (v2)
 
-Frames: 3487 numbers frames (10 numbers (1, 4-10, MIL, MILLON), 70 signers, LSC70ANH crops) + 2000 none frames.
+Frames: 4737 numbers frames (12 numbers (1-10, MIL, MILLON; 2 and 3 only from our captures), 73 signers, LSC70ANH crops + 1250 frames of our own captures) + 2000 none frames.
 All numbers are on held-out signers (GroupKFold 5 by signer).
 
-## Variants tried (macro accuracy over 10 numbers + none, frame level / sample level)
+## Variants tried (macro accuracy over 12 numbers + none, frame level / sample level)
 
 | variant | frame | sample |
 |---|---|---|
-| feats=xy | 0.861 | 0.886 |
-| feats=xy+z | 0.854 | 0.888 |
-| feats=xy+geo | 0.847 | 0.870 |
-| feats=xy+z+geo3 | 0.844 | 0.876 |
-| wider (256,128) a=1e-3 | 0.854 | 0.881 |
-| aug x4 rot 25 | 0.858 | 0.896 |
-| aug 3D viewpoint | 0.868 | 0.908 |
-| +full-frame LSC70 | 0.869 | 0.910 |
-| ensemble x5 | 0.872 | 0.911 |
+| feats=xy | 0.809 | 0.852 |
+| feats=xy+z | 0.799 | 0.827 |
+| feats=xy+geo | 0.808 | 0.836 |
+| feats=xy+z+geo3 | 0.791 | 0.824 |
+| wider (256,128) a=1e-3 | 0.803 | 0.833 |
+| aug x4 rot 25 | 0.794 | 0.828 |
+| aug 3D viewpoint | 0.805 | 0.844 |
+| +full-frame LSC70 | 0.798 | 0.827 |
+| ensemble x5 | 0.810 | 0.843 |
+| quick: chosen | 0.809 | 0.852 |
 
-Chosen: `{"feats": "xy", "hidden": [128, 64], "alpha": 0.0001, "copies": 2, "rot": 15, "aug3d": true, "extra": false, "seeds": 1}`
+Chosen: `{"feats": "xy", "hidden": [128, 64], "alpha": 0.0001, "copies": 2, "rot": 15, "aug3d": false, "extra": false, "seeds": 1}`
 
 ## Per sign
 
@@ -26,36 +27,50 @@ Shape spread = how much the handshape changes within one sample (high = the sign
 
 | sign | frame acc | sample acc | target threshold | target recall | worst false accept | shape spread |
 |---|---|---|---|---|---|---|
-| 1 | 0.768 | 0.812 | 0.85 | 0.352 | 6 0.049 | 0.178 |
-| 10 | 0.871 | 0.943 | 0.50 | 0.871 | none 0.029 | 1.360 |
-| 4 | 0.943 | 0.971 | 0.83 | 0.663 | 9 0.048 | 0.147 |
-| 5 | 0.949 | 0.957 | 0.50 | 0.949 | none 0.019 | 0.111 |
-| 6 | 0.801 | 0.871 | 0.81 | 0.645 | 1 0.048 | 0.253 |
-| 7 | 0.962 | 0.971 | 0.50 | 0.962 | 6 0.014 | 0.297 |
-| 8 | 0.929 | 0.971 | 0.50 | 0.926 | 9 0.040 | 0.350 |
-| 9 | 0.783 | 0.886 | 0.50 | 0.777 | 4 0.045 | 0.397 |
-| MIL | 0.845 | 0.875 | 0.50 | 0.845 | none 0.019 | 0.759 |
-| MILLON | 0.810 | 0.825 | 0.50 | 0.807 | none 0.020 | 0.629 |
-| none | 0.884 | | | | |
+| 1 | 0.863 | 0.870 | 0.94 | 0.352 | 6 0.036 | 0.140 |
+| 10 | 0.888 | 0.957 | 0.50 | 0.888 | none 0.032 | 1.360 |
+| 2 | 0.714 | 0.759 | 0.50 | 0.710 | 3 0.038 | 0.183 |
+| 3 | 0.433 | 0.444 | 0.60 | 0.408 | 8 0.047 | 0.186 |
+| 4 | 0.868 | 0.917 | 0.82 | 0.616 | 9 0.048 | 0.134 |
+| 5 | 0.855 | 0.904 | 0.50 | 0.855 | none 0.021 | 0.102 |
+| 6 | 0.765 | 0.843 | 0.83 | 0.601 | 1 0.049 | 0.253 |
+| 7 | 0.935 | 0.957 | 0.77 | 0.916 | 2 0.048 | 0.297 |
+| 8 | 0.892 | 1.000 | 0.95 | 0.662 | 3 0.126 | 0.350 |
+| 9 | 0.783 | 0.886 | 0.61 | 0.732 | 4 0.049 | 0.397 |
+| MIL | 0.851 | 0.875 | 0.50 | 0.851 | none 0.017 | 0.759 |
+| MILLON | 0.800 | 0.810 | 0.50 | 0.800 | none 0.030 | 0.629 |
+| none | 0.873 | | | | |
 
-Macro: frame 0.868, sample 0.908.
+Macro: frame 0.809, sample 0.852.
 
 ## Most confused (true -> predicted, frame level)
 
-- MILLON -> none: 0.190
-- 6 -> 1: 0.172
-- 1 -> 6: 0.154
-- MIL -> none: 0.143
-- 9 -> 4: 0.137
-- 10 -> none: 0.123
-- 1 -> none: 0.075
-- 5 -> none: 0.051
-- 4 -> 9: 0.048
-- 8 -> 9: 0.045
-- 9 -> 8: 0.043
-- 9 -> none: 0.024
+- 3 -> 8: 0.353
+- 6 -> 1: 0.213
+- MILLON -> none: 0.200
+- 5 -> none: 0.145
+- 2 -> 7: 0.141
+- MIL -> none: 0.131
+- 1 -> 6: 0.123
+- 9 -> 4: 0.121
+- 10 -> none: 0.109
+- 3 -> none: 0.105
+- 2 -> none: 0.097
+- 4 -> 9: 0.068
 
-Free-mode threshold tau = 0.860 (<= 5% of none frames above it, floor 0.70). holdFrames = 8.
+## Our captures (each person held out)
+
+| sign | aris_p3 | gabriel_p1 | santiago_p2 | all | frames |
+|---|---|---|---|---|---|
+| 1 | 1.00 | 0.75 | 1.00 | 0.899 | 276 |
+| 2 | 0.48 | 0.83 | 0.78 | 0.714 | 269 |
+| 3 | 0.32 | 0.37 | 0.57 | 0.433 | 238 |
+| 4 | 0.59 | 0.79 | 1.00 | 0.793 | 241 |
+| 5 | 0.48 | 0.57 | 1.00 | 0.681 | 226 |
+
+Our captures macro 0.704; LSC70 + none frames only, macro 0.865.
+
+Free-mode threshold tau = 0.873 (<= 5% of none frames above it, floor 0.70). holdFrames = 8.
 Target thresholds: for every other class, <= 5% of its frames reach the threshold (per frame, before the 8-frame hold).
 
-Golden: 14 cases (4 mirrored); JSON forward pass vs sklearn max error 3.20e-06
+Golden: 16 cases (4 mirrored); JSON forward pass vs sklearn max error 5.78e-07
