@@ -5,6 +5,7 @@ signers, keeps a change only when it helps, exports letters_mlp.json (v2) + gold
     python train_letters.py --quick          # skip exploring, export the saved best config (runs.json)
     python train_letters.py --set numbers    # same process on the LSC70 numbers -> numbers_mlp.json
     python train_letters.py --set numbers --custom   # + our own captures (frames/custom, adds 2 and 3)
+    python train_letters.py --set numbers --custom --only 1,2,3,4,5   # just these classes (+ none)
 
 Our captures (capture/capture_custom.py -> capture/custom_to_frames.py) are dataset "custom", one signer
 per person (team:<name>_p<id>); they join the same signer-split cross-validation as LSC70.
@@ -38,7 +39,12 @@ LABELS, SET_DESC = SETS[SET]
 CUSTOM = "--custom" in sys.argv
 if CUSTOM and SET == "numbers":  # LSC70 has no 2 or 3; our captures do
     LABELS, SET_DESC = NUMBERS | {"2", "3"}, "12 numbers (1-10, MIL, MILLON; 2 and 3 only from our captures)"
-RUNS = os.path.join(os.path.dirname(OUT.rstrip("/")), f"{SET}{'_custom' if CUSTOM else ''}_runs.json")
+ONLY = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None
+if ONLY:  # keep just these classes, e.g. --only 1,2,3,4,5
+    LABELS = set(ONLY.split(",")) & LABELS
+    SET_DESC = f"{len(LABELS)} numbers ({', '.join(sorted(LABELS, key=lambda s: (len(s), s)))})" if SET == "numbers" else f"{len(LABELS)} classes"
+RUNS = os.path.join(os.path.dirname(OUT.rstrip("/")),
+                    f"{SET}{'_custom' if CUSTOM else ''}{'_only' + ONLY.replace(',', '') if ONLY else ''}_runs.json")
 N_NONE = 2000
 HOLD = 8
 BASE = dict(feats="xy", hidden=[128, 64], alpha=1e-4, copies=2, rot=15, aug3d=False, extra=False, seeds=1)
@@ -329,7 +335,7 @@ def main():
         best_cfg = saved["chosen"] or dict(BASE)
         prior = [e for e in saved["trials"] if not e["name"].startswith("quick:")]
         best = trial("quick: chosen", best_cfg)
-        args = [a for a in sys.argv[1:] if a not in ("--quick", "--set", SET, "--custom")]
+        args = [a for a in sys.argv[1:] if a not in ("--quick", "--set", SET, "--custom", "--only", ONLY)]
         if args:
             cfg = dict(best_cfg, **json.loads(args[0]))
             r = trial(f"quick: chosen + {args[0]}", cfg)
