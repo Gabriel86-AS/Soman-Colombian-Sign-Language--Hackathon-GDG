@@ -11,3 +11,17 @@ Manifest (2026-10-21): 17,102 rows = lsc70 15,504 + lsc50 370 + lsc54 1,228.
 - [x] LSC50 middle field = person (5 different people per HOLA); last field = rep.
 - [x] LSC-54 Chao == LSC50 ADIOS (0031): same sign, they merge.
 - [x] LSC70 frames _0.._5 are in time order.
+
+# Notes (phase 2)
+
+Extraction ran 2026-10-21 on the Colab VM: 4,182 clips (lsc70 2,584 · lsc54 1,228 · lsc50 370). Parts in Drive `soman-ml/frames/<dataset>/`, QC tables in `soman-ml/qc/`.
+
+- **Gate 1 (LSC50 detection):** 0.968 mean, 368/370 clips kept. Passes; no crop or Holistic fallback needed.
+- **Gate 1b (LSC70 static letters):** none below 0.75. Passes; `LSC70ANH` fallback not needed. LSC70 overall 0.975, 2,554/2,584 kept.
+- **LSC-54:** 1,194/1,228 kept (mean per-frame rate 0.60 because of idle frames at clip edges; the drop rule uses the first-to-last-detection window).
+- **Static letters:** every letter has 402-420 frames and 67-70 signers (need >= 250 / >= 50).
+- **Words (kept clips / signers):** ADIOS 74/23, BIEN 74/23, BUENAS_NOCHES 77/23, BUENAS_TARDES 75/23, BUENOS_DIAS 74/23, HOLA 70/23, POR_FAVOR 70/22, GRACIAS 46/14 (need >= 9). All pass.
+- The LSC-54 digit folders (cinco ... uno) have one signer each; irrelevant to the MVP.
+- Gotcha: a `SOMAN_OUT` set in the notebook kernel is inherited by `Popen` children. The full run therefore wrote to `/content/frames_test`, then was copied to Drive.
+- Gotcha: never block the colab-mcp kernel with a wait loop; poll with short cells instead.
+- Still open: contact sheets looked at by eye; 20-clip LSC50 Holistic cross-check.
