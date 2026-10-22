@@ -17,10 +17,11 @@ from extract import OUT, STATIC, MOVING
 QC = os.environ.get("SOMAN_QC", os.path.join(os.path.dirname(OUT.rstrip("/")), "qc"))
 FEATS = os.environ.get("SOMAN_FEATS", os.path.join(os.path.dirname(OUT.rstrip("/")), "features"))
 T_WORDS, T_MOVING = 30, 12
+LETTER_DS = os.environ.get("SOMAN_LETTER_DS", "lsc70h")  # hand crops; full frames give ~70% (hands ~40 px)
 
 
 def build_letters(df, keep):
-    d = df[(df.dataset == "lsc70") & df.label.isin(STATIC) & (df.hand_idx >= 0)]
+    d = df[(df.dataset == LETTER_DS) & df.label.isin(STATIC) & (df.hand_idx >= 0)]
     d = d.merge(keep, on=["dataset", "sample_id"])
     lm = d[S.HAND_COLS].to_numpy(float).reshape(-1, 21, 3)
     left = (d.handedness == "Left").to_numpy()

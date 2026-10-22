@@ -31,7 +31,7 @@ def clip_table(df):
     for (ds, sid), g in df.groupby(["dataset", "sample_id"], sort=False):
         fr = g.groupby("frame").has_hand.any()
         n, nh = len(fr), int(fr.sum())
-        if ds == "lsc70":
+        if ds in ("lsc70", "lsc70h"):
             keep = nh >= 4
             span = nh / max(n, 1)
         else:
@@ -63,17 +63,17 @@ def rates():
     g1 = ct[ct.dataset == "lsc50"].det_rate.mean()
     print(f"\nGate 1 (LSC50 detection, want >= 0.70): {g1:.3f}")
     # Gate 1b: static letters in LSC70
-    l = ct[(ct.dataset == "lsc70") & ct.label.isin(STATIC)].groupby("label").det_rate.mean()
+    l = ct[(ct.dataset == "lsc70h") & ct.label.isin(STATIC)].groupby("label").det_rate.mean()
     bad = l[l < 0.75]
     print(f"Gate 1b (LSC70 static letters < 0.75): {dict(bad.round(3)) if len(bad) else 'none'}")
     # Done-when counts (kept clips only)
     k = ct[ct.keep]
     ls = df.merge(k[["dataset", "sample_id"]], on=["dataset", "sample_id"])
-    ls = ls[(ls.dataset == "lsc70") & ls.label.isin(STATIC) & ls.has_hand]
+    ls = ls[(ls.dataset == "lsc70h") & ls.label.isin(STATIC) & ls.has_hand]
     c = ls.groupby("label").agg(frames=("frame", "size"), signers=("signer", "nunique"))
     print("\nStatic letters (want >= 250 frames, >= 50 signers):")
     print(c.assign(ok=(c.frames >= 250) & (c.signers >= 50)).to_string())
-    w = k[k.dataset != "lsc70"]
+    w = k[~k.dataset.isin(["lsc70", "lsc70h"])]
     w = w[~w.label.str.startswith("imp_")]
     mvp = w.groupby("label").agg(clips=("sample_id", "size"), signers=("signer", "nunique"))
     print("\nWords (want >= 15 signers, GRACIAS >= 9):")

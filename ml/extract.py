@@ -32,6 +32,8 @@ LSC54_MVP = {"gracias": "GRACIAS", "buenosdias": "BUENOS_DIAS", "buenastardes": 
              "adios": "ADIOS", "porfavor": "POR_FAVOR"}
 
 GROUPS = ["lsc70_static", "lsc54_mvp", "lsc50_mvp", "lsc50_imp", "lsc70_moving", "rest"]
+EXTRA_GROUPS = ["lsc70h_static"]  # Gate 1b: LSC70ANH hand crops padded 120->240 (run explicitly)
+PAD = 60
 HAND_COLS = [f"{a}{i}" for i in range(21) for a in "xyz"]
 POSE_COLS = ["nose_x", "nose_y", "lsh_x", "lsh_y", "rsh_x", "rsh_y"]
 
@@ -93,6 +95,8 @@ def _frames(path, kind, sample_id):
             img = cv2.imread(p)
             if img is None:
                 continue
+            if "LSC70ANH" in p:
+                img = cv2.copyMakeBorder(img, PAD, PAD, PAD, PAD, cv2.BORDER_CONSTANT, value=(114, 114, 114))
             yield k, round(k * 1000 / 6), cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     else:
         cap = cv2.VideoCapture(path)
@@ -165,7 +169,14 @@ def load_rows(groups):
     m["pose"] = m.group.isin(["lsc54_mvp", "lsc50_mvp"])
     rows = []
     for g in groups:
-        rows += m[m.group == g].to_dict("records")
+        if g == "lsc70h_static":
+            h = m[m.group == "lsc70_static"].copy()
+            h["path"] = h.path.str.replace("LSC70AN/", "LSC70ANH/", regex=False)
+            h["dataset"] = "lsc70h"
+            h["pose"] = False
+            rows += h.to_dict("records")
+        else:
+            rows += m[m.group == g].to_dict("records")
     return rows
 
 

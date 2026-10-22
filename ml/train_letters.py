@@ -17,7 +17,7 @@ from sklearn.preprocessing import StandardScaler
 
 import normalize as N
 import sequences as S
-from build_features import FEATS, QC
+from build_features import FEATS, LETTER_DS, QC
 from extract import OUT
 
 EXPORT = os.environ.get("SOMAN_EXPORT", os.path.join(os.path.dirname(os.path.abspath(__file__)), "out"))
@@ -203,7 +203,7 @@ def main():
 
     # golden vectors: raw landmarks -> features -> probabilities, using the exported JSON only
     model = json.load(open(f"{EXPORT}/letters_mlp.json"))
-    d = pd.concat([pd.read_parquet(os.path.join(OUT, "lsc70"), filters=[("label", "in", chosen)])])
+    d = pd.concat([pd.read_parquet(os.path.join(OUT, LETTER_DS), filters=[("label", "in", chosen)])])
     d = d[d.hand_idx >= 0].sample(16, random_state=1)
     cases = []
     for _, r in d.iterrows():
