@@ -162,17 +162,25 @@ def score(probs, D, classes):
 
 def thresholds(probs, y, classes):
     """Free mode: tau so <= 5% of none frames have a letter prob above it (floor 0.70).
-    Target mode (the app knows the letter): per letter, tau_l so <= 5% of frames that are NOT that
-    letter (other letters + none) reach p_l >= tau_l; clipped to [0.30, 0.95]."""
+    Target mode (the app knows the letter): per letter, the lowest tau_l in [0.50, 0.95] such that, for
+    EVERY other class c (each other letter and none), <= 5% of c's frames reach p_l >= tau_l. The worst
+    class matters (a learner making E when asked for C), not the average. 0.50 keeps the target the top guess."""
     ni = list(classes).index("none")
     tau = float(max(0.70, np.percentile(np.delete(probs[y == "none"], ni, 1).max(1), 95)))
-    per, rec = {}, {}
+    per, rec, worst = {}, {}, {}
     for i, c in enumerate(classes):
         if c == "none":
             continue
-        t = float(np.clip(np.percentile(probs[y != c, i], 95), 0.30, 0.95))
-        per[c], rec[c] = round(t, 4), float((probs[y == c, i] >= t).mean())
-    return tau, per, rec
+        t = 0.95
+        for cand in np.arange(0.50, 0.951, 0.01):
+            fa = {o: float((probs[y == o, i] >= cand).mean()) for o in classes if o != c}
+            if max(fa.values()) <= 0.05:
+                t = float(cand)
+                break
+        fa = {o: float((probs[y == o, i] >= t).mean()) for o in classes if o != c}
+        o = max(fa, key=fa.get)
+        per[c], rec[c], worst[c] = round(t, 2), float((probs[y == c, i] >= t).mean()), (o, fa[o])
+    return tau, per, rec, worst
 
 
 # ---------------------------------------------------------------- export
@@ -264,9 +272,17 @@ def main():
         return r
 
     if quick:
+        # --quick [json]: rerun the saved choice; with json, also try choice+json and keep it if >= 0.5 point better
         best_cfg = saved["chosen"] or dict(BASE)
-        best = trial("chosen (rerun)", best_cfg)
-        log = [e for e in saved["trials"] if e["name"] != "chosen (rerun)"] + log[-1:]
+        prior = [e for e in saved["trials"] if not e["name"].startswith("quick:")]
+        best = trial("quick: chosen", best_cfg)
+        args = [a for a in sys.argv[1:] if a != "--quick"]
+        if args:
+            cfg = dict(best_cfg, **json.loads(args[0]))
+            r = trial(f"quick: chosen + {args[0]}", cfg)
+            if r["macro"] >= best["macro"] + 0.005:
+                best_cfg, best = cfg, r
+        log = prior + log
     else:
         # stage 1: features (simplest first; a richer set must win by >= 1 point: more Dart code)
         best_cfg, best = dict(BASE), trial("feats=xy", dict(BASE))
@@ -295,7 +311,7 @@ def main():
 
     # final: held-out results of the chosen config give the report + thresholds; then fit on everyone
     r = best
-    tau, per, rec = thresholds(r["probs"], D["y"], classes)
+    tau, per, rec, worst = thresholds(r["probs"], D["y"], classes)
     P, y = D["P"], D["y"]
     if best_cfg["extra"]:
         load_extra()
@@ -318,13 +334,13 @@ def main():
     rep += ["", f"Chosen: `{json.dumps(best_cfg)}`", "",
             "## Per letter", "",
             "Free = argmax over all classes. Target = the app knows the letter: frame passes if p(letter) >= its own threshold.", "",
-            "| letter | frame acc | sample acc | target threshold | target recall |", "|---|---|---|---|---|"]
-    rep += [f"| {c} | {r['acc'][c]:.3f} | {r['acc_sample'][c]:.3f} | {per[c]:.2f} | {rec[c]:.3f} |" for c in letters]
-    rep += [f"| none | {r['acc']['none']:.3f} | | | |", "",
+            "| letter | frame acc | sample acc | target threshold | target recall | worst false accept |", "|---|---|---|---|---|---|"]
+    rep += [f"| {c} | {r['acc'][c]:.3f} | {r['acc_sample'][c]:.3f} | {per[c]:.2f} | {rec[c]:.3f} | {worst[c][0]} {worst[c][1]:.3f} |" for c in letters]
+    rep += [f"| none | {r['acc']['none']:.3f} | | | | |", "",
             f"Macro: frame {r['macro']:.3f}, sample {r['macro_sample']:.3f}.", "",
             "## Most confused (true -> predicted, frame level)", ""] + [f"- {a} -> {b}: {v:.3f}" for v, a, b in conf]
     rep += ["", f"Free-mode threshold tau = {tau:.3f} (<= 5% of none frames above it, floor 0.70). holdFrames = {HOLD}.",
-            "Target thresholds: <= 5% of frames of other letters or none reach them (per frame, before the hold).", "",
+            "Target thresholds: for every other class, <= 5% of its frames reach the threshold (per frame, before the 8-frame hold).", "",
             f"Golden: {len(gold['cases'])} cases (4 mirrored); JSON forward pass vs sklearn max error {err:.2e}"]
     open(f"{EXPORT}/letters_report.md", "w", encoding="utf-8").write("\n".join(rep) + "\n")
     print("\n".join(rep), flush=True)

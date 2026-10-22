@@ -46,7 +46,7 @@ def test_pipeline():
     cfg = dict(T.BASE, feats="xy+z+geo3", aug3d=True, seeds=2)
     r = T.score(T.cv(cfg, D, None), D, classes)
     assert r["macro"] > 0.9, r["macro"]
-    tau, per, rec = T.thresholds(r["probs"], D["y"], classes)
+    tau, per, rec, worst = T.thresholds(r["probs"], D["y"], classes)
     members = [T.fit(cfg, D["P"], D["y"], s) for s in range(2)]
     model = T.to_json(members, cfg["feats"], tau, per)
     L = dict(lm=lms, w=np.full(len(lms), 240), h=np.full(len(lms), 240), hand=np.array(["Right"] * len(lms)), y=D["y"])
