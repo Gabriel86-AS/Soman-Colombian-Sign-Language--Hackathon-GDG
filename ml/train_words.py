@@ -35,6 +35,7 @@ BASE = dict(T=30, hidden=[256, 128], alpha=1e-3, copies=4, rot=15, loc_shift=0.1
             seeds=3)
 MAX_FA, MAX_OTHER, GATE, N_GATE = 0.10, 0.10, 0.80, 6
 GRID = np.round(np.arange(0.10, 0.951, 0.01), 2)
+NAME = sys.argv[sys.argv.index("--name") + 1] if "--name" in sys.argv else "words_mlp"  # output file stem
 FLOOR = float(sys.argv[sys.argv.index("--floor") + 1]) if "--floor" in sys.argv else 0.5  # lowest p(word) to pass
 
 
@@ -309,7 +310,14 @@ def to_json(members, cfg, thresholds, gate5):
         out.append(dict(mean=R(mb["sc"].mean_), std=R(mb["sc"].scale_), layers=layers))
     lay = [[k, d] for k, d in layout(cfg)]
     # W is [out][in]: y[o] = sum_i W[o][i]*x[i] + b[o]. Final probs = mean of the members' softmax.
+    idle = json.load(open(f"{FEATS}/idle_thr.json"))["idle_thr"] if os.path.exists(f"{FEATS}/idle_thr.json") else None
+    order = "both" if cfg.get("swap") else "higher_main" if cfg.get("canon") else "longest_path"
     return dict(version=2, kind="words", features=FEATURES, T_source=30, T=cfg["T"], window_ms=2500,
+                idle_thr=idle, floor=FLOOR, hand_order=order, config=cfg,
+                hand_order_note="longest_path: main = hand with the longest wrist path (sequences.clip_to_sequence). "
+                                "higher_main: then swap the hands if the second one has a lower mean locB y. "
+                                "both: score once as given and once with the two hands swapped (only if a second hand "
+                                "exists), and average the probs.",
                 layout=lay, needs_pose=True, labels=CLASSES, members=out, thresholds=thresholds, gate5=gate5,
                 note="per time step concatenate the layout blocks (from sequences.clip_to_sequence at T=30; shape2_tips = landmarks 4,8,12,16,20 of shape2); "
                      "if T < 30 resample each block linearly on a uniform grid; dloc* = step-to-step change of the resampled loc (first step 0); flatten time-major; then the MLP")
@@ -336,15 +344,19 @@ def golden(model, D, members, cfg):
     idx = [int(i) for w in WORDS for i in rng.choice(np.where(D["y"] == w)[0], 2, replace=False)]
     idx += [int(i) for i in rng.choice(np.where(D["y"] == "other")[0], 4, replace=False)]
     Dq = subset(D, np.array(idx))
-    F = feats(Dq, cfg)
+    Dp = prep(Dq, cfg)  # blocks below are after the hand-order rule
+    views = [feats(Dp, cfg)] + ([feats(swap(Dp), cfg)] if cfg.get("swap") else [])
     n = len(idx)
     cases = []
     for r, i in enumerate(idx):
-        blocks = dict(shape=Dq["S1"][r].reshape(30, 40), locB=Dq["LB"][r], locN=Dq["LN"][r],
-                      shape2=Dq["S2"][r].reshape(30, 40), locB2=Dq["LB2"][r])
-        cases.append(dict(label=str(D["lab"][i]), sample_id=str(D["sid"][i]),
+        blocks = dict(shape=Dp["S1"][r].reshape(30, 40), locB=Dp["LB"][r], locN=Dp["LN"][r],
+                      shape2=Dp["S2"][r].reshape(30, 40), locB2=Dp["LB2"][r], locN2=Dp["LN2"][r])
+        fs = [V[r] for V in views]
+        cases.append(dict(label=str(D["lab"][i]), sample_id=str(D["sid"][i]), has2=bool(Dp["has2"][r]),
                           blocks={k: np.round(v, 8).tolist() for k, v in blocks.items()},
-                          features=np.round(F[r], 8).tolist(), probs=forward(model, F[r]).tolist()))
+                          features=np.round(fs[0], 8).tolist(),
+                          features_swapped=np.round(fs[1], 8).tolist() if len(fs) > 1 else None,
+                          probs=np.mean([forward(model, f) for f in fs], 0).tolist()))
     sk = predict(members, Dq, cfg)
     err = float(np.abs(sk - np.array([c["probs"] for c in cases])).max())
     assert n == len(cases)
@@ -378,7 +390,7 @@ def report(trials, cfg, res, thr, ship, cr):
           "## Caveats", "- Impostors are LSC50 only (5 people, 42 words); LSC-54 non-MVP signs have no pose.",
           "- No team clips yet: the cross-dataset number is the closest to \"new user, new phone\".",
           "- The app pipeline is the DTW one: 2.5 s window, idle trim, resample to 30, PoseLandmarker lite."]
-    open(f"{EXPORT}/words_mlp_report.md", "w", encoding="utf-8").write("\n".join(L) + "\n")
+    open(f"{EXPORT}/{NAME}_report.md", "w", encoding="utf-8").write("\n".join(L) + "\n")
 
 
 # ---------------------------------------------------------------- main
@@ -463,9 +475,9 @@ def main():
     members = [fit(cfg, D, s) for s in range(cfg["seeds"])]
     model = to_json(members, cfg, {w: round(thr[w], 4) for w in WORDS}, ship)
     os.makedirs(f"{EXPORT}/golden", exist_ok=True)
-    json.dump(model, open(f"{EXPORT}/words_mlp.json", "w"), separators=(",", ":"))
+    json.dump(model, open(f"{EXPORT}/{NAME}.json", "w"), separators=(",", ":"))
     g, err = golden(model, D, members, cfg)
-    json.dump(g, open(f"{EXPORT}/golden/words_mlp.json", "w"), separators=(",", ":"))
+    json.dump(g, open(f"{EXPORT}/golden/{NAME}.json", "w"), separators=(",", ":"))
     report(trials, cfg, res, thr, ship, cr)
     for w in WORDS:
         r = res[w]
