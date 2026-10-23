@@ -50,6 +50,27 @@ def dist_matrix(Q, Tm, band):
     return out
 
 
+def medoids(F, k, band):
+    """k medoids by farthest-first init + a few PAM-style updates on the DTW matrix. Returns indices."""
+    if len(F) <= k:
+        return np.arange(len(F))
+    dm = dist_matrix(F, F, band)
+    dm = (dm + dm.T) / 2
+    sel = [int(dm.sum(1).argmin())]
+    while len(sel) < k:
+        sel.append(int(dm[:, sel].min(1).argmax()))
+    for _ in range(10):
+        asg = dm[:, sel].argmin(1)
+        new = []
+        for c in range(k):
+            m = np.where(asg == c)[0]
+            new.append(int(m[dm[np.ix_(m, m)].sum(1).argmin()]) if len(m) else sel[c])
+        if new == sel:
+            break
+        sel = new
+    return np.array(sel)
+
+
 def class_scores(dm, tlabels, classes, k=5):
     """dm [nq,nt] -> [nq,len(classes)]: mean of the k smallest distances to each class's templates."""
     out = np.full((dm.shape[0], len(classes)), np.inf)

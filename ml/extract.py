@@ -33,7 +33,7 @@ LSC54_MVP = {"gracias": "GRACIAS", "buenosdias": "BUENOS_DIAS", "buenastardes": 
              "adios": "ADIOS", "porfavor": "POR_FAVOR"}
 
 GROUPS = ["lsc70_static", "lsc54_mvp", "lsc50_mvp", "lsc50_imp", "lsc70_moving", "rest"]
-EXTRA_GROUPS = ["lsc70h_static", "lsc70h_numbers"]  # LSC70ANH hand crops padded 120->240 (run explicitly)
+EXTRA_GROUPS = ["lsc70h_static", "lsc70h_numbers", "lsc70h_moving"]  # LSC70ANH hand crops padded 120->240 (run explicitly)
 PAD = 60
 HAND_COLS = [f"{a}{i}" for i in range(21) for a in "xyz"]
 POSE_COLS = ["nose_x", "nose_y", "lsh_x", "lsh_y", "rsh_x", "rsh_y"]
@@ -170,8 +170,9 @@ def load_rows(groups):
     m["pose"] = m.group.isin(["lsc54_mvp", "lsc50_mvp", "lsc50_imp"])
     rows = []
     for g in groups:
-        if g in ("lsc70h_static", "lsc70h_numbers"):
-            sel = m.group == "lsc70_static" if g == "lsc70h_static" else (m.dataset == "lsc70") & m.label.isin(NUMBERS)
+        if g in EXTRA_GROUPS:
+            sel = {"lsc70h_static": m.group == "lsc70_static", "lsc70h_moving": m.group == "lsc70_moving",
+                   "lsc70h_numbers": (m.dataset == "lsc70") & m.label.isin(NUMBERS)}[g]
             h = m[sel].copy()
             h["path"] = h.path.str.replace("LSC70AN/", "LSC70ANH/", regex=False)
             h["dataset"] = "lsc70h"

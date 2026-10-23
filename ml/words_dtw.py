@@ -63,24 +63,7 @@ def folds(signer, ds, n=5, seed=0):
 
 
 def medoids(F, k):
-    """k medoids by farthest-first init + a few PAM-style updates on the DTW matrix. Returns indices."""
-    if len(F) <= k:
-        return np.arange(len(F))
-    dm = D.dist_matrix(F, F, BAND)
-    dm = (dm + dm.T) / 2
-    sel = [int(dm.sum(1).argmin())]
-    while len(sel) < k:
-        sel.append(int(dm[:, sel].min(1).argmax()))
-    for _ in range(10):
-        asg = dm[:, sel].argmin(1)
-        new = []
-        for c in range(k):
-            m = np.where(asg == c)[0]
-            new.append(int(m[dm[np.ix_(m, m)].sum(1).argmin()]) if len(m) else sel[c])
-        if new == sel:
-            break
-        sel = new
-    return np.array(sel)
+    return D.medoids(F, k, BAND)
 
 
 def build_templates(F, labels, train_idx, n_templ=N_TEMPL):

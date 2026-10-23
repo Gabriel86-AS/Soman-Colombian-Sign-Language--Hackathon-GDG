@@ -135,6 +135,41 @@ def _hand_features(arr, t, w, h, is_left, nose_sh, T, idle_thr):
                 locN=_resample(locN, t, T), path=path)
 
 
+# ---- moving letters (feature version m1) ---------------------------------------------------------
+# Shape from the hand crop (like static letters), wrist path from the full frame. No smoothing, no idle trim.
+MOVING_MIN_FRAMES = 4
+
+
+def _fill_nan(a, t):
+    """a [n,...] with NaN rows (no hand) -> filled by linear interpolation in time, edges held.
+    None if fewer than MOVING_MIN_FRAMES rows have a hand."""
+    flat = np.asarray(a, np.float64).reshape(len(a), -1)
+    ok = ~np.isnan(flat).any(1)
+    if ok.sum() < MOVING_MIN_FRAMES:
+        return None
+    out = np.stack([np.interp(t, t[ok], flat[ok, d]) for d in range(flat.shape[1])], 1)
+    return out.reshape(np.shape(a))
+
+
+def moving_shape(lm, img_w, img_h, is_left, t_ms, T=12):
+    """lm [n,21,2+] from the hand crop (NaN rows = no hand) -> [T,40] handshape over time, or None."""
+    t = np.asarray(t_ms, np.float64)
+    a = _fill_nan(np.asarray(lm, np.float64)[..., :2], t)
+    if a is None:
+        return None
+    return _resample(N.handshape_seq(a, img_w, img_h, is_left), t, T)
+
+
+def moving_path(lm, img_w, img_h, is_left, t_ms, T=12):
+    """lm [n,21,2+] from the full frame (NaN rows = no hand) -> [T,2] wrist path (variant A), or None."""
+    t = np.asarray(t_ms, np.float64)
+    a = _fill_nan(np.asarray(lm, np.float64)[..., :2], t)
+    if a is None:
+        return None
+    wrist, scale = N.wrist_px(a, img_w, img_h, is_left)
+    return _resample(N.location_a(wrist, scale), t, T)
+
+
 def clip_to_sequence(g, T, idle_thr=None):
     g = g.sort_values("frame")
     frames = np.array(sorted(g.frame.unique()))
