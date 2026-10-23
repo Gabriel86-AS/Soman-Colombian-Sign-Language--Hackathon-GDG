@@ -93,6 +93,16 @@ The intended model is numbers 1-5, so the 12-number one above is replaced. `pyth
 - Errors are now mostly "sign -> none" (5 13%, 3 13%, 2 10%), not number swaps; 3 -> 4 6%.
 - Demo: `ml/demo_numbers_team/` (frozen copy of this model).
 
+# Notes (phase 6, moving letters, 2026-10-22)
+
+`moving_dtw.py` (sheets / eval / mlp / export). Clips = LSC70's 6 frames (first second, 6 fps) of G H J N Ñ S Z; negatives = the 20 static letters' clips. 1,832 clips kept (458 moving, 1,374 static, 70 signers; 58 dropped for < 4 frames with a hand). Crops: `python extract.py lsc70h_moving` (490 clips; **S was missing from `MOVING`, fixed**). Sheets: Drive `soman-ml/qc/sheets/moving_<X>.png` (6 crops + full-frame wrist path per clip).
+
+- **Shape from the hand crop is the key** (as for static letters): DTW mean recall 0.73 crop vs 0.45 full frame. The full-frame wrist path **hurts** (0.73 -> 0.68 at weight 1, 0.54 at weight 6): hands are ~40 px, the tracker jumps. So: no location features for moving letters.
+- **DTW verifies handshape, not motion.** With the words threshold rule (cap 95th pct, <= 10% of ALL non-target clips) DTW crop_b2 passes G 0.87 / N 0.93, but a held K passes as G 75%, M as N 60%, R as H 70%, F as S 74%. With a fair rule (every other single letter <= 5%, the letters rule), DTW drops to 0.36 mean recall (0.65 with static reject templates), 0/7 letters pass.
+- **MLP wins (M9 rule):** sklearn MLP (256,128) on the crop-shape sequence [12x40 = 480], classes 7 moving + "static", aug x4 (in-plane rot 15, scale 10%, jitter 0.02), 3 seeds, GroupKFold 5 by signer. worst5 rule, p >= 0.5: mean recall 0.79, **G 0.87, J 0.84, N 0.96, Ñ 0.86 pass**; S 0.66, Z 0.73, H 0.62 fail; worst static letter passing <= 3%. Without aug 0.70.
+- Sheets: motion is mostly inside the first second (J pinky turn, Z index trace visible) but frames are blurry.
+- Open: switching moving letters from DTW to an MLP needs the user's OK (decision in CONTEXT.md). App timing must match: 1 s window resampled to 12, crop around the hand.
+
 # Notes (phase 5)
 
 Words with kNN-DTW (`dtw.py`, `words_dtw.py`; Colab, 2026-10-21). Signer-held-out 5 folds over 23 signers (LSC50 persons spread one per fold), k=5, band 3 of 30 samples (10%), cost = sum of frame distances / path length.
