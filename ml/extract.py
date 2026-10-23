@@ -24,7 +24,7 @@ OUT = os.environ.get("SOMAN_OUT", "/content/drive/MyDrive/soman-ml/frames")
 MODELS = os.environ.get("SOMAN_MODELS", "/content/models")
 
 STATIC = set("ABCDEFIKLMOPQRTUVWXY")
-MOVING = set("GHJNZ") | {"NN"}
+MOVING = set("GHJNSZ") | {"NN"}
 NUMBERS = {"1", "4", "5", "6", "7", "8", "9", "10", "MIL", "MILLON"}  # LSC70 has no 0, 2, 3
 LSC50_MVP = {"GRACIAS", "BUENOS_DIAS", "BUENAS_TARDES", "BUENAS_NOCHES", "BIEN", "HOLA", "ADIOS", "POR_FAVOR"}
 # LSC-54 folder names (ascii, letters only, lowercase) -> canonical label. Chao == ADIOS.
