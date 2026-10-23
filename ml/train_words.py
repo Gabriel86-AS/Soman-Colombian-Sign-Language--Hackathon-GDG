@@ -56,8 +56,10 @@ def load():
     y = np.where(mvp, lab, "other")[keep]
     D = dict(S1=S1[keep], LB=LB[keep], LN=LN[keep], S2=S2[keep], LB2=LB2[keep], LN2=LN2[keep], y=y,
              yi=np.array([CLASSES.index(c) for c in y]), g=signer[keep], ds=ds[keep], lab=lab[keep],
-             sid=z["sample_id"].astype(str)[keep], dom=z["dom"].astype(float)[keep],
-             sec=z["sec"].astype(float)[keep])
+             sid=z["sample_id"].astype(str)[keep])
+    # path length of each hand (shoulder-width units, from locB; older npz files have no dom/sec)
+    D["dom"] = np.linalg.norm(np.diff(D["LB"], axis=1), axis=-1).sum(1)
+    D["sec"] = np.linalg.norm(np.diff(D["LB2"], axis=1), axis=-1).sum(1)
     D["has2"] = np.abs(D["S2"]).sum((1, 2, 3)) > 0
     D["fold"] = folds(D["g"], D["ds"])
     return D
