@@ -137,8 +137,17 @@ def oof(F, y, g, rej, band):
     return Sc
 
 
-def verify(Sc, y, rej, thr=None):
-    """Per target letter: threshold (if not given), recall, false accepts. Pass = target wins and score <= thr."""
+def _limit(s_sorted, n, frac):
+    """Largest threshold that lets at most floor(frac * n) of these (sorted) scores pass."""
+    m = int(np.floor(frac * n))
+    return float(np.nextafter(s_sorted[m], -np.inf)) if m < len(s_sorted) else np.inf
+
+
+def verify(Sc, y, rej, thr=None, rule="cap95", max_thr=np.inf):
+    """Per target letter: threshold (if not given), recall, false accepts. Pass = target wins and score <= thr.
+    rule cap95: 95th percentile of correct scores, lowered until <= MAX_FA of all non-target clips pass (words rule).
+    rule worst5: no cap; every other single letter (static or moving) passes as the target <= 5% (letters rule).
+    max_thr: hard ceiling (MLP: -0.5, i.e. p(target) >= 0.5)."""
     pred = Sc.argmin(1)
     res, thr = {}, dict(thr or {})
     for i, c in enumerate(LETTERS):
@@ -146,12 +155,13 @@ def verify(Sc, y, rej, thr=None):
         s = Sc[:, i]
         win = pred == i
         if c not in thr:
-            ok_pos = s[pos & win]
-            cap = float(np.percentile(ok_pos, 95)) if len(ok_pos) else 0.0
-            s_neg = np.sort(s[neg & win])
-            m = int(np.floor(MAX_FA * neg.sum()))
-            limit = float(np.nextafter(s_neg[m], -np.inf)) if m < len(s_neg) else np.inf
-            thr[c] = min(cap, limit)
+            if rule == "cap95":
+                ok_pos = s[pos & win]
+                cap = float(np.percentile(ok_pos, 95)) if len(ok_pos) else 0.0
+                thr[c] = min(cap, _limit(np.sort(s[neg & win]), neg.sum(), MAX_FA))
+            else:
+                thr[c] = min(_limit(np.sort(s[(y == l) & win]), (y == l).sum(), 0.05) for l in set(y[neg]))
+            thr[c] = min(thr[c], max_thr)
         acc = win & (s <= thr[c])
         per_static = {l: float(acc[y == l].mean()) for l in STATIC_L if (y == l).any()}
         worst = max(per_static, key=per_static.get)
@@ -226,15 +236,25 @@ def mlp_compare(hidden=(256, 128), seeds=3):
                 m = MLPClassifier(hidden, alpha=1e-3, max_iter=300, early_stopping=True, random_state=s)
                 m.fit(sc.transform(Xtr), ytr)
                 P[te] += m.predict_proba(sc.transform(X[te].reshape(len(te), -1))) / seeds
-        r, _ = verify(-P, y, True)
-        rec = np.mean([r[c]["recall"] for c in LETTERS])
-        rep[name] = dict(mean_recall=float(rec), n_pass=int(sum(r[c]["gate3"] for c in LETTERS)), letters=r)
-        print(f"{name:10s} recall {rec:.3f} pass {rep[name]['n_pass']}/7", flush=True)
-        for c in LETTERS:
-            q = r[c]
-            print(f"  {DISPLAY.get(c, c):2s} top1={q['top1_moving']:.2f} recall={q['recall']:.2f} FA all={q['fa_all']:.3f} "
-                  f"worst static {q['worst_static']}={q['worst_static_fa']:.2f}", flush=True)
+        np.save(f"{FEATS}/moving_oof_{name}.npy", P)
+        for rule in ("cap95", "worst5"):
+            rep[f"{name}/{rule}"] = _show(f"{name}/{rule}", *verify(-P, y, True, rule=rule, max_thr=-0.5)[:1])
+    # DTW (best variant) under the same rules
+    F = features(C, "crop")
+    for rej in (False, True):
+        Sc = oof(F, y, g, rej, 2)
+        for rule in ("cap95", "worst5"):
+            name = f"dtw_crop_b2{'+rej' if rej else ''}/{rule}"
+            rep[name] = _show(name, verify(Sc, y, rej, rule=rule)[0])
     json.dump(rep, open(f"{FEATS}/moving_mlp_eval.json", "w"), indent=1)
+
+
+def _show(name, r):
+    rec = np.mean([r[c]["recall"] for c in LETTERS])
+    out = dict(mean_recall=float(rec), n_pass=int(sum(r[c]["gate3"] for c in LETTERS)), letters=r)
+    print(f"{name:24s} recall {rec:.3f} pass {out['n_pass']}/7  " + " ".join(
+        f"{DISPLAY.get(c, c)}={r[c]['recall']:.2f}/{r[c]['worst_static']}{r[c]['worst_static_fa']:.2f}" for c in LETTERS), flush=True)
+    return out
 
 
 # ---------------------------------------------------------------- export
