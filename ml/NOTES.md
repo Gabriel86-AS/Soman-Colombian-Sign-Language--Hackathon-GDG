@@ -133,3 +133,12 @@ Words with kNN-DTW (`dtw.py`, `words_dtw.py`; Colab, 2026-10-21). Signer-held-ou
 - Weak: GRACIAS 0.54 (46 clips, 14 signers), BUENAS_TARDES 0.69, BUENOS_DIAS / BUENAS_NOCHES 0.77 (confused with each other). More signers (team clips) is the next fix.
 - Gotcha: round-1 model and golden share the filename `words_mlp.json`; copy them to Drive under different names.
 - Outputs `out/words_mlp.json` (format v2 + `kind` words, `layout`, `T`, `T_source`, `needs_pose`, `gate5`) and `out/golden/words_mlp.json` (20 cases: T=30 blocks, flat features, probs; JSON vs sklearn 7e-8) are in Drive `soman-ml/words_mlp_r2/words_out.zip` (6 MB model, too big for the colab-mcp output channel).
+
+# Notes (words, two hands, 2026-10-23)
+
+Rounds 3 and 4 of `train_words.py` (`--round3`, `--round4`, logs `features/words_runs_r3.json`, `_r4.json`). Round 4 = each setup x 3 repeats with other random draws (run-to-run sd ~0.005, but single runs of the same config moved 0.746 -> 0.770 when the random stream changed).
+
+- **Hands swap.** "Main = longest wrist path" flips in two-handed words: second/main path ratio > 0.7 in 23-36% of GRACIAS / BUENOS / BUENAS clips; the second hand is the higher one in only 48-68%. This is why second-hand shape hurt before.
+- Round 4 means (recall @0.5 floor, words pass @0.5, words pass @0.3 floor, top-1): base 0.756 / 3.7 / 3.7 / 0.806; **swap** (train on both hand orders, average the two orders at test) 0.749 / 3.0 / **5.7** / **0.838**; swap+shape2 0.775 / 3.7 / 4.3 (GRACIAS 0.71 vs 0.52); canon_shape2 (main = higher hand) 0.771 / 4.7 / 5.0; swap+all (shape2, locN2, hand offset) 0.763 / 4.0 / 4.0; canon_all 0.774 / 4.0 / 5.0.
+- Second-hand nose position and hand-to-hand offset alone: +0.01, within noise.
+- Picked: **swap at floor 0.3**. Final export run: **6/8 pass, Gate 5 PASS** (GRACIAS 0.67 and BUENAS_NOCHES 0.68 fail), mean recall 0.823, impostor FA 0-8%; cross-dataset 0.50 / 0.58 (worse than the old 0.61 / 0.59). Exported as `out/words_mlp_swap.json` (+ golden, report; `hand_order` "both", `idle_thr`, `floor` in the JSON). Old `words_mlp.json` kept. Demo: `ml/Demo_dynamic_words/`.
