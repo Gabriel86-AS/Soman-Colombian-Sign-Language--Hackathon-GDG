@@ -101,7 +101,11 @@ The intended model is numbers 1-5, so the 12-number one above is replaced. `pyth
 - **DTW verifies handshape, not motion.** With the words threshold rule (cap 95th pct, <= 10% of ALL non-target clips) DTW crop_b2 passes G 0.87 / N 0.93, but a held K passes as G 75%, M as N 60%, R as H 70%, F as S 74%. With a fair rule (every other single letter <= 5%, the letters rule), DTW drops to 0.36 mean recall (0.65 with static reject templates), 0/7 letters pass.
 - **MLP wins (M9 rule):** sklearn MLP (256,128) on the crop-shape sequence [12x40 = 480], classes 7 moving + "static", aug x4 (in-plane rot 15, scale 10%, jitter 0.02), 3 seeds, GroupKFold 5 by signer. worst5 rule, p >= 0.5: mean recall 0.79, **G 0.87, J 0.84, N 0.96, Ñ 0.86 pass**; S 0.66, Z 0.73, H 0.62 fail; worst static letter passing <= 3%. Without aug 0.70.
 - Sheets: motion is mostly inside the first second (J pinky turn, Z index trace visible) but frames are blurry.
-- Open: switching moving letters from DTW to an MLP needs the user's OK (decision in CONTEXT.md). App timing must match: 1 s window resampled to 12, crop around the hand.
+- **User chose the MLP.** `train_moving.py` variant search (mean recall, worst5 rule): base 0.797, +3D aug 0.814, **+time warp 0.838 (chosen)**, copies 8 0.833, rot 25 0.838 (no gain), small (128,64) 0.819, alpha 1e-2 0.832, 5 seeds 0.820. Final: (256,128), alpha 1e-3, aug x4 rot 15 + 3D yaw/pitch 15 + time warp 0.85-1.15x / shift 10%, 3 members.
+- **Final (held-out signers):** G 0.89, J 0.88, N 0.96, Ñ 0.90, Z 0.80 pass Gate 3 (numbers); H 0.67, S 0.76 fail (video-only). Worst static letter passing as a moving one <= 3%. Thresholds 0.50 except S 0.61, Z 0.52.
+- Exported `ml/out/moving_mlp.json` (format v2 + `kind`, `features` moving_shape_m1, `T` 12, `frames` 6, `window_ms` 1000, `gate3`; 4.4 MB, 3 members), `golden/moving_letters.json` (18 cases with raw crop landmarks, null = no hand; JSON vs sklearn 6e-7), `moving_report.md`. Demo `ml/demo_moving/` (countdown, 1 s, 6 frames at LSC70 timing; `--check` passes locally).
+- Gate 3 eye check on the sheets: still to confirm by the user (J and Z looked complete in the first second).
+- Gotcha: printing > ~600 KB in one colab-mcp cell output hangs and drops the connection; 200 KB chunks work.
 
 # Notes (phase 5)
 
