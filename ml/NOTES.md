@@ -121,3 +121,15 @@ Words with kNN-DTW (`dtw.py`, `words_dtw.py`; Colab, 2026-10-21). Signer-held-ou
 - **Two-handed (data-driven):** BUENOS_DIAS, BUENAS_TARDES, BUENAS_NOCHES, GRACIAS. CHAO = ADIOS merged (checked in Phase 1).
 - Sequences now also hold `locN`, `locB2`, `locN2` (nose-relative / second hand). The pose pass also ran on the LSC50 impostors.
 - Gotcha: `pkill -f <name>` inside a `subprocess.run(shell=True)` kills its own shell (the pattern is in its command line).
+
+# Notes (words MLP, 2026-10-23)
+
+`train_words.py` replaces kNN-DTW for words with an MLP (same move as moving letters). Input = variant-C blocks from `sequences_words.npz`, classes 8 MVP words + other (208 LSC50 impostors), same 5 signer folds as the DTW eval. Two search rounds (`--round2 --base '<json>'`); logs on Drive `soman-ml/features/words_runs*.json`, `soman-ml/words_mlp_r2/`; out-of-fold probs `features/words_oof_mlp*.npy`. Full table in `out/words_mlp_report.md`.
+
+- **4/8 words pass** (BIEN 0.84, HOLA 0.83, ADIOS 0.84, POR_FAVOR 0.89), mean recall 0.77, impostor FA 0.5-4.3% per word. DTW: 0/8, mean 0.63. **Gate 5 still fails** (6 needed). Top-1 equal (0.81). Cross-dataset 0.61 / 0.59 (DTW 0.56 / 0.58).
+- Final: T=15 (each block resampled 30 -> 15), no second-hand shape (it hurt BUENAS_NOCHES 0.51 -> 0.69 when dropped), aug x8 (hand rotation 15, position shift 0.2 shoulder widths + scale 10%, time warp), (256,128), 3 members, 6.0 MB.
+- What helped: augmentation (+5 points), stronger position shift, dropping shape2, T15. What did not: location velocity, fingertip-only shape2, oversampling GRACIAS, shift 0.3, smaller net, ensemble 5.
+- Thresholds all sit at the 0.5 floor: the reject rule is not the limit, model confidence is. A 0.3 floor adds 2-3 points but no extra word passes.
+- Weak: GRACIAS 0.54 (46 clips, 14 signers), BUENAS_TARDES 0.69, BUENOS_DIAS / BUENAS_NOCHES 0.77 (confused with each other). More signers (team clips) is the next fix.
+- Gotcha: round-1 model and golden share the filename `words_mlp.json`; copy them to Drive under different names.
+- Outputs `out/words_mlp.json` (format v2 + `kind` words, `layout`, `T`, `T_source`, `needs_pose`, `gate5`) and `out/golden/words_mlp.json` (20 cases: T=30 blocks, flat features, probs; JSON vs sklearn 7e-8) are in Drive `soman-ml/words_mlp_r2/words_out.zip` (6 MB model, too big for the colab-mcp output channel).
