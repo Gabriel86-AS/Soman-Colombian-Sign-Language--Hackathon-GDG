@@ -30,7 +30,7 @@ EXPORT = OUTDIR
 RUNS = f"{FEATS}/words_runs.json"
 CLASSES = WORDS + ["other"]
 FEATURES = "words_c_m1"
-LAYOUT = [("shape", 40), ("locB", 2), ("locN", 2), ("shape2", 40), ("locB2", 2)]
+
 BASE = dict(T=30, hidden=[256, 128], alpha=1e-3, copies=4, rot=15, loc_shift=0.1, warp=True, shape2=True,
             seeds=3)
 MAX_FA, MAX_OTHER, GATE, N_GATE = 0.10, 0.10, 0.80, 6
@@ -75,15 +75,44 @@ def resample_T(a, T):
     return (1 - w) * a[:, i0] + w * a[:, i0 + 1]
 
 
+TIPS = [3, 7, 11, 15, 19]  # landmarks 4, 8, 12, 16, 20 (the shape block starts at landmark 1)
+
+
+def layout(cfg):
+    """[(block, dims)] per time step, in order. shape2: True (40), "tips" (fingertips, 10) or False.
+    vel: per-step change of locB, locN, locB2 after resampling (first step 0)."""
+    s2 = cfg.get("shape2", True)
+    lay = [("shape", 40), ("locB", 2), ("locN", 2)]
+    lay += [("shape2", 40)] if s2 is True else [("shape2_tips", 10)] if s2 == "tips" else []
+    lay += [("locB2", 2)]
+    if cfg.get("vel"):
+        lay += [("dlocB", 2), ("dlocN", 2), ("dlocB2", 2)]
+    return lay
+
+
 def feats(D, cfg):
-    """-> [n, T*86] time-major. Without shape2 the second hand's shape block is dropped (locB2 kept)."""
-    n = len(D["S1"])
-    parts = [D["S1"].reshape(n, -1, 40), D["LB"], D["LN"]]
-    if cfg["shape2"]:
-        parts.append(D["S2"].reshape(n, -1, 40))
-    parts.append(D["LB2"])
-    F = np.concatenate(parts, 2)
-    return resample_T(F, cfg["T"]).reshape(n, -1)
+    """-> [n, T * sum(layout dims)] time-major."""
+    n, T = len(D["S1"]), cfg["T"]
+    blk = dict(shape=D["S1"].reshape(n, -1, 40), locB=D["LB"], locN=D["LN"], shape2=D["S2"].reshape(n, -1, 40),
+               shape2_tips=D["S2"][:, :, TIPS].reshape(n, -1, 10), locB2=D["LB2"])
+    blk = {k: resample_T(v, T) for k, v in blk.items()}
+    for k in ("locB", "locN", "locB2"):
+        blk["d" + k] = np.concatenate([np.zeros((n, 1, 2)), np.diff(blk[k], axis=1)], 1)
+    return np.concatenate([blk[k] for k, _ in layout(cfg)], 2).reshape(n, -1)
+
+
+def balance(D, cfg):
+    """Oversample (whole clips) every MVP word up to the largest MVP word count."""
+    if not cfg.get("balance"):
+        return D
+    cnt = {w: int((D["y"] == w).sum()) for w in WORDS}
+    top = max(cnt.values())
+    rng = np.random.default_rng(0)
+    idx = [np.arange(len(D["y"]))]
+    for w, c in cnt.items():
+        if 0 < c < top:
+            idx.append(rng.choice(np.where(D["y"] == w)[0], top - c))
+    return subset(D, np.concatenate(idx))
 
 
 # ---------------------------------------------------------------- augmentation
@@ -140,6 +169,7 @@ def augment(D, cfg, rng):
 
 # ---------------------------------------------------------------- model
 def fit(cfg, D, seed):
+    D = balance(D, cfg)
     A = augment(D, cfg, np.random.default_rng(seed)) if cfg["copies"] else D
     X = feats(A, cfg)
     yi = np.tile(D["yi"], len(X) // len(D["yi"]))
@@ -215,12 +245,12 @@ def to_json(members, cfg, thresholds, gate5):
         layers = [dict(W=R(m.coefs_[i].T), b=R(m.intercepts_[i]), act="relu") for i in range(len(m.coefs_) - 1)]
         layers.append(dict(W=R(m.coefs_[-1].T), b=R(m.intercepts_[-1]), act="softmax"))
         out.append(dict(mean=R(mb["sc"].mean_), std=R(mb["sc"].scale_), layers=layers))
-    lay = [[k, d] for k, d in LAYOUT if cfg["shape2"] or k != "shape2"]
+    lay = [[k, d] for k, d in layout(cfg)]
     # W is [out][in]: y[o] = sum_i W[o][i]*x[i] + b[o]. Final probs = mean of the members' softmax.
     return dict(version=2, kind="words", features=FEATURES, T_source=30, T=cfg["T"], window_ms=2500,
                 layout=lay, needs_pose=True, labels=CLASSES, members=out, thresholds=thresholds, gate5=gate5,
-                note="per time step concatenate the layout blocks (from sequences.clip_to_sequence at T=30); "
-                     "if T < 30 resample linearly on a uniform grid; flatten time-major; then the MLP")
+                note="per time step concatenate the layout blocks (from sequences.clip_to_sequence at T=30; shape2_tips = landmarks 4,8,12,16,20 of shape2); "
+                     "if T < 30 resample each block linearly on a uniform grid; dloc* = step-to-step change of the resampled loc (first step 0); flatten time-major; then the MLP")
 
 
 def forward(model, f):
@@ -294,7 +324,12 @@ def main():
     D = load()
     print(f"{len(D['y'])} clips ({(D['y'] != 'other').sum()} MVP, {(D['y'] == 'other').sum()} impostors), "
           f"{len(set(D['g']))} signers", flush=True)
-    trials, cfg = [], dict(BASE)
+    base = dict(BASE)
+    if "--base" in sys.argv:
+        base.update(json.loads(sys.argv[sys.argv.index("--base") + 1]))
+    round2 = "--round2" in sys.argv
+    runs = RUNS.replace(".json", "_r2.json") if round2 else RUNS
+    trials, cfg = [], base
 
     def trial(name, c):
         res, thr, rec, npass = evaluate(cv(c, D), D["y"])
@@ -304,21 +339,25 @@ def main():
         trials.append(t)
         print(f"{name:12s} recall {rec:.3f} pass {npass}/8 top1 {top1:.3f}  "
               + " ".join(f"{w}={res[w]['recall']:.2f}" for w in WORDS), flush=True)
-        json.dump(trials, open(RUNS, "w"), indent=1)
+        json.dump(trials, open(runs, "w"), indent=1)
         return t
 
+    ROUND1 = (("no_aug", dict(copies=0)), ("no_warp", dict(warp=False)), ("T15", dict(T=15)),
+              ("no_shape2", dict(shape2=False)), ("copies8", dict(copies=8)),
+              ("loc_shift0.2", dict(loc_shift=0.2)), ("small", dict(hidden=[128, 64])),
+              ("alpha1e-2", dict(alpha=1e-2)), ("ensemble5", dict(seeds=5)))
+    ROUND2 = (("vel", dict(vel=True)), ("shape2_tips", dict(shape2="tips")), ("balance", dict(balance=True)),
+              ("loc_shift0.3", dict(loc_shift=0.3)), ("warp", dict(warp=True)), ("T15", dict(T=15)))
     best = trial("base", cfg)
     best["kept"] = True
     if "--quick" not in sys.argv:
-        for name, change in (("no_aug", dict(copies=0)), ("no_warp", dict(warp=False)), ("T15", dict(T=15)),
-                             ("no_shape2", dict(shape2=False)), ("copies8", dict(copies=8)),
-                             ("loc_shift0.2", dict(loc_shift=0.2)), ("small", dict(hidden=[128, 64])),
-                             ("alpha1e-2", dict(alpha=1e-2)), ("ensemble5", dict(seeds=5))):
+        for name, change in (ROUND2 if round2 else ROUND1):
             t = trial(name, {**cfg, **change})
-            if (t["n_pass"], t["mean_recall"]) > (best["n_pass"], best["mean_recall"] + 0.005):  # real gains only
+            # keep only real gains in mean recall (n_pass jumps on noise at the 0.80 line); T15 kept if no loss (half size)
+            if t["mean_recall"] >= best["mean_recall"] + (-0.003 if name == "T15" else 0.005):
                 cfg, best = {**cfg, **change}, t
                 t["kept"] = True
-        json.dump(trials, open(RUNS, "w"), indent=1)
+        json.dump(trials, open(runs, "w"), indent=1)
     print("chosen:", cfg, flush=True)
     res, thr, rec, npass = evaluate(cv(cfg, D), D["y"])
     cr = cross(cfg, D)
