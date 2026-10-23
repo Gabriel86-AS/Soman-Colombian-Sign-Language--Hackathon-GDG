@@ -3,6 +3,7 @@
     python extract.py lsc70h_moving        # once: LSC70ANH hand crops of the moving letters (dataset lsc70h)
     python moving_dtw.py sheets            # 6 crops + wrist path per clip -> QC/sheets/moving_<X>.png (Gate 3 eye check)
     python moving_dtw.py eval              # all variants, signer-held-out -> FEATS/moving_eval.json
+    python moving_dtw.py mlp               # comparison: small MLP on the crop-shape sequence -> FEATS/moving_mlp_eval.json
     python moving_dtw.py export <variant>  # templates, golden, report -> ml/out/  (add --all to skip Gate 3)
 
 A clip = LSC70's 6 frames (first second, 6 fps). Shape comes from the hand crop (lsc70h), the wrist path
@@ -188,6 +189,54 @@ def evaluate():
     json.dump(dict(best=best, variants=rep), open(f"{FEATS}/moving_eval.json", "w"), indent=1)
 
 
+# ---------------------------------------------------------------- comparison: small MLP (M9 rule: only if it beats DTW)
+def _augment(X, rng, copies=4, rot=15, scale=0.1, jitter=0.02):
+    """X [n,T,40] crop shape -> copies with one in-plane rotation/scale per clip and per-point jitter."""
+    P = X.reshape(len(X), X.shape[1], 20, 2)
+    out = [P]
+    for _ in range(copies):
+        a = np.deg2rad(rng.uniform(-rot, rot, len(P)))
+        s = rng.uniform(1 - scale, 1 + scale, len(P))
+        R = np.stack([np.cos(a), -np.sin(a), np.sin(a), np.cos(a)], 1).reshape(-1, 1, 1, 2, 2)
+        Q = (R @ P[..., None])[..., 0] * s[:, None, None, None]
+        out.append(Q + rng.normal(0, jitter, Q.shape))
+    return np.concatenate(out).reshape(-1, X.shape[1] * 40)
+
+
+def mlp_compare(hidden=(256, 128), seeds=3):
+    """Out-of-fold MLP on the crop-shape sequence, classes = 7 moving letters + 'static'. Same verification
+    metrics as DTW (score = -p(class)), so the numbers compare directly."""
+    from sklearn.neural_network import MLPClassifier
+    from sklearn.preprocessing import StandardScaler
+    C = load_clips()
+    y, g = C["label"], C["signer"]
+    yc = np.where(np.isin(y, LETTERS), y, "static")
+    cl = classes(True)
+    yi = np.array([cl.index(c) for c in yc])
+    X = C["shape"]
+    rep = {}
+    for name, aug in (("mlp", False), ("mlp_aug", True)):
+        P = np.zeros((len(X), len(cl)))
+        for f, (tr, te) in enumerate(GroupKFold(5).split(X, y, g)):
+            rng = np.random.default_rng(f)
+            Xtr = _augment(X[tr], rng) if aug else X[tr].reshape(len(tr), -1)
+            ytr = np.tile(yi[tr], len(Xtr) // len(tr))
+            sc = StandardScaler().fit(Xtr)
+            for s in range(seeds):
+                m = MLPClassifier(hidden, alpha=1e-3, max_iter=300, early_stopping=True, random_state=s)
+                m.fit(sc.transform(Xtr), ytr)
+                P[te] += m.predict_proba(sc.transform(X[te].reshape(len(te), -1))) / seeds
+        r, _ = verify(-P, y, True)
+        rec = np.mean([r[c]["recall"] for c in LETTERS])
+        rep[name] = dict(mean_recall=float(rec), n_pass=int(sum(r[c]["gate3"] for c in LETTERS)), letters=r)
+        print(f"{name:10s} recall {rec:.3f} pass {rep[name]['n_pass']}/7", flush=True)
+        for c in LETTERS:
+            q = r[c]
+            print(f"  {DISPLAY.get(c, c):2s} top1={q['top1_moving']:.2f} recall={q['recall']:.2f} FA all={q['fa_all']:.3f} "
+                  f"worst static {q['worst_static']}={q['worst_static_fa']:.2f}", flush=True)
+    json.dump(rep, open(f"{FEATS}/moving_mlp_eval.json", "w"), indent=1)
+
+
 # ---------------------------------------------------------------- export
 def parse(name):
     """'crop_loc3_b1+rej' -> (variant, band, rej)."""
@@ -328,6 +377,8 @@ if __name__ == "__main__":
         sheets()
     elif cmd == "eval":
         evaluate()
+    elif cmd == "mlp":
+        mlp_compare()
     elif cmd == "export":
         export(sys.argv[2], "--all" in sys.argv)
     else:
