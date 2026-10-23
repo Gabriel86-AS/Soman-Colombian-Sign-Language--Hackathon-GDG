@@ -216,6 +216,7 @@ def fit(cfg, D, seed):
     if cfg.get("swap"):  # both hand orders in training (two-hand clips added again, swapped)
         D = cat(D, subset(swap(D), np.where(D["has2"])[0]))
     D = balance(D, cfg)
+    seed = seed + 1000 * cfg.get("rep", 0)  # rep: repeat a trial with other random draws
     A = augment(D, cfg, np.random.default_rng(seed)) if cfg["copies"] else D
     X = feats(A, cfg)
     yi = np.tile(D["yi"], len(X) // len(D["yi"]))
@@ -417,6 +418,25 @@ def main():
     ROUND3 = (("locN2", dict(locN2=True)), ("hdist", dict(hdist=True)), ("canon", dict(canon=True)),
               ("swap", dict(swap=True)), ("swap_shape2", dict(swap=True, shape2=True)),
               ("canon_shape2", dict(canon=True, shape2=True)))
+    if "--round4" in sys.argv:  # confirm: each mix x 3 repeats, mean +- sd
+        both = dict(shape2=True, locN2=True, hdist=True)
+        ROUND4 = (("base", {}), ("swap", dict(swap=True)), ("swap_shape2", dict(swap=True, shape2=True)),
+                  ("canon_shape2", dict(canon=True, shape2=True)), ("swap_all", dict(swap=True, **both)),
+                  ("canon_all", dict(canon=True, **both)))
+        runs4 = RUNS.replace(".json", "_r4.json")
+        summ = []
+        for name, change in ROUND4:
+            ts = [trial(f"{name}#{r}", {**cfg, **change, "rep": r}) for r in range(3)]
+            json.dump(trials, open(runs4, "w"), indent=1)
+            f = lambda k: (np.mean([t[k] for t in ts]), np.std([t[k] for t in ts]))
+            summ.append((name, f("mean_recall"), f("n_pass"), f("mean_recall_f03"), f("n_pass_f03"), f("top1"),
+                         {w: np.mean([t["recall"][w] for t in ts]) for w in WORDS}))
+        print("\nsummary (3 repeats, mean +- sd)", flush=True)
+        for name, rec, npass, rec3, np3, top1, pw in summ:
+            print(f"{name:13s} recall {rec[0]:.3f}+-{rec[1]:.3f} pass {npass[0]:.1f} | floor0.3 {rec3[0]:.3f}+-{rec3[1]:.3f} "
+                  f"pass {np3[0]:.1f} | top1 {top1[0]:.3f}  "
+                  + " ".join(f"{w}={v:.2f}" for w, v in pw.items()), flush=True)
+        return
     best = trial("base", cfg)
     best["kept"] = True
     if round3:
