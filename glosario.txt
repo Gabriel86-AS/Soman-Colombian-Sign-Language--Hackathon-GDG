@@ -40,9 +40,53 @@ Genética recesiva. Ambos padres pueden ser portadores de un gen asociado a la s
 Infecciones durante el embarazo. Las más frecuentes son el citomegalovirus (CMV), la rubéola, la toxoplasmosis y la sífilis.
 Complicaciones en el parto. Por ejemplo, prematuridad, falta de oxígeno o ictericia grave.
 Causas después del nacimiento. Entre ellas, la meningitis, ciertos medicamentos ototóxicos, infecciones de oído graves o golpes en la cabeza.
+
+
 ¿Por que se dice 'persona oyente' y no 'persona sana'?
 
 Se debe a dos formas de entender la sordera:
 
 1. Modelo médico. Ve la sordera como una enfermedad o deficiencia que hay que corregir. Desde ahí, lo opuesto a "sordo" sería "sano" o "normal". El problema es que este enfoque define a la persona sorda por lo que le "falta".
 
+2. Modelo social o cultural. Ve la sordera como una forma distinta de experimentar el mundo, con lengua, cultura e identidad propias. Desde ahí, lo opuesto a "sordo" es simplemente "oyente": alguien que oye, sin implicar que sea mejor ni más completo.
+
+Por qué "sano" es problemático:
+
+Implica enfermedad. Una persona sorda puede estar perfectamente sana: no tiene fiebre ni dolor, y su vida no corre riesgo. La sordera es una característica, no un malestar.
+Crea una jerarquía. "Sano" frente a "enfermo" sugiere que ser oyente es lo correcto y ser sordo es un defecto.
+Es inexacto. Una persona oyente puede estar enferma de muchas otras cosas. "Sano" no describe realmente la diferencia.
+Una analogía: a una persona que habla español no la llamamos "sana" frente a alguien que habla inglés. Son simplemente grupos distintos. "Oyente" y "sordo" funcionan igual: describen sin juzgar.
+
+¿Cuales son los consejos para criar un hijo o hija sordo?
+
+Los consejos más importantes son estos:
+
+Darle acceso a una lengua lo antes posible. Es lo más crucial. Los primeros años son clave para el desarrollo del cerebro, y si el niño no recibe una lengua accesible, puede sufrir privación lingüística, con efectos en su aprendizaje y desarrollo emocional. La LSC es 100 % accesible para un niño sordo desde el nacimiento.
+Que toda la familia aprenda LSC. No basta con que la aprenda el niño. Si en casa nadie seña, se queda aislado de las conversaciones familiares.
+Considerar un enfoque bilingüe. LSC como primera lengua y español escrito (y oral, si es posible) como segunda. Aprender señas no impide aprender español; al contrario, una base lingüística sólida facilita aprender la segunda lengua.
+Conectarlo con la comunidad sorda. Que conozca a adultos y niños sordos le da modelos de identidad y le muestra que puede tener una vida plena.
+Buscar intervención temprana. Lo ideal es un diagnóstico y acompañamiento profesional pronto: audiólogo, pedagogo, modelos lingüísticos sordos.
+Informarse bien sobre audífonos e implantes. Son una opción válida, pero no garantizan oír de forma normal. Lo recomendable es no depender solo de ellos y seguir dándole acceso a la LSC.
+Adaptar la casa a lo visual. Por ejemplo, timbres con luz, alarmas visuales, buena iluminación y mantener contacto visual al comunicarse.
+Elegir bien la educación. Busca colegios con modelo bilingüe o con intérpretes y docentes que sepan LSC.
+Tratarlo con normalidad y expectativas altas. Un niño sordo puede estudiar, trabajar y desarrollarse como cualquier otro si tiene acceso a la comunicación.
+Recursos en Colombia:
+
+INSOR (Instituto Nacional para Sordos): orientación a familias y educación.
+FENASCOL (Federación Nacional de Sordos de Colombia): comunidad, cursos de LSC e interpretación.
+¿Que es la privacion linguistica?
+
+La privación lingüística ocurre cuando un niño no tiene acceso pleno a ninguna lengua durante sus primeros años de vida, que es el periodo crítico para adquirirla.
+
+Por qué afecta sobre todo a niños sordos:
+
+No pueden adquirir el español oral de forma natural porque no lo oyen bien.
+Si además no se les expone a la lengua de señas, se quedan sin ninguna lengua completa.
+Es común porque la mayoría nace en familias oyentes que no saben LSC, y a veces se les recomienda evitar las señas para "forzar" el habla.
+Consecuencias:
+
+Cognitivas: dificultades en memoria, razonamiento, cálculo y organización del pensamiento, porque la lengua es una herramienta para pensar.
+Académicas: problemas para aprender a leer y escribir, ya que no hay una primera lengua sólida sobre la cual construir.
+Emocionales y sociales: aislamiento, frustración, dificultad para expresar emociones y mayor riesgo de problemas de salud mental.
+Duraderas: si se pasa el periodo crítico, muchas de estas dificultades no se revierten por completo, incluso si la persona aprende una lengua más tarde.
+La clave: no es la sordera la que causa estos problemas, sino la falta de acceso a una lengua. Un niño sordo expuesto a la LSC desde temprano se desarrolla con normalidad.
