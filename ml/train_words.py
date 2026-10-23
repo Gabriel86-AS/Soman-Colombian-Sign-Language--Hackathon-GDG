@@ -10,8 +10,8 @@ PoseLandmarker lite for shoulders + nose): per time step
     locB = shoulder-relative wrist, locN = nose-relative wrist, *2 = second hand, zeros if none).
 Flattened time-major: [t][86]. Optional T=15: linear resample of the 30-step sequence (np.interp per dim).
 Classes: the 8 MVP words + "other" (LSC50 impostor words, the only impostors with pose).
-Target mode (the app knows the word): pass = p(word) >= thresholds[word] (>= 0.5, so it is the top guess).
-Threshold = lowest value in [0.50, 0.95] where impostors pass as the word <= 10% AND every other single
+Target mode (the app knows the word): pass = p(word) >= thresholds[word] (>= the floor, default 0.5 = top guess; --floor to lower it).
+Threshold = lowest value in [floor, 0.95] where impostors pass as the word <= 10% AND every other single
 MVP word passes as it <= 10%. Gate 5: >= 6 of 8 words with recall >= 0.80 under that rule.
 Outputs: ml/out/words_mlp.json, golden/words_mlp.json, words_mlp_report.md. Run log: FEATS/words_runs.json.
 """
@@ -34,7 +34,8 @@ FEATURES = "words_c_m1"
 BASE = dict(T=30, hidden=[256, 128], alpha=1e-3, copies=4, rot=15, loc_shift=0.1, warp=True, shape2=True,
             seeds=3)
 MAX_FA, MAX_OTHER, GATE, N_GATE = 0.10, 0.10, 0.80, 6
-GRID = np.round(np.arange(0.50, 0.951, 0.01), 2)
+GRID = np.round(np.arange(0.10, 0.951, 0.01), 2)
+FLOOR = float(sys.argv[sys.argv.index("--floor") + 1]) if "--floor" in sys.argv else 0.5  # lowest p(word) to pass
 
 
 # ---------------------------------------------------------------- data
@@ -195,9 +196,10 @@ def cv(cfg, D):
     return probs
 
 
-def evaluate(probs, y, thr=None):
+def evaluate(probs, y, thr=None, floor=None):
     """Target-mode verification per word. Returns per-word results, thresholds, mean recall, n words passing."""
     thr = dict(thr or {})
+    grid = GRID[GRID >= (FLOOR if floor is None else floor) - 1e-9]
     imp = y == "other"
     top = probs[:, :len(WORDS)].argmax(1)
     res = {}
@@ -205,8 +207,8 @@ def evaluate(probs, y, thr=None):
         s, pos = probs[:, i], y == w
         others = [o for o in WORDS if o != w and (y == o).any()]
         if w not in thr:
-            thr[w] = float(GRID[-1])
-            for t in GRID:
+            thr[w] = float(grid[-1])
+            for t in grid:
                 if (s[imp] >= t).mean() <= MAX_FA and max((s[y == o] >= t).mean() for o in others) <= MAX_OTHER:
                     thr[w] = float(t)
                     break
@@ -294,7 +296,7 @@ def report(trials, cfg, res, thr, ship, cr):
          "Model: MLP on the variant-C word sequence (hand shape + shoulder/nose-relative position, both hands), "
          f"classes = 8 MVP words + other (LSC50 impostors). Config: `{json.dumps(cfg)}`.",
          "All numbers are on held-out signers (same 5 signer folds as the DTW eval). Target mode: pass = p(word) >= "
-         f"its threshold; threshold = lowest value in [0.50, 0.95] where impostors pass as the word <= {MAX_FA:.0%} "
+         f"its threshold; threshold = lowest value in [{FLOOR:.2f}, 0.95] where impostors pass as the word <= {MAX_FA:.0%} "
          f"and every other single MVP word passes as it <= {MAX_OTHER:.0%}. Thresholds are fit on the same "
          "out-of-fold scores, so recall is slightly optimistic.", "",
          "## Variant search", "", "| trial | mean recall | words >= 80% | mean top-1 | kept |", "|---|---|---|---|---|"]
@@ -332,12 +334,14 @@ def main():
     trials, cfg = [], base
 
     def trial(name, c):
-        res, thr, rec, npass = evaluate(cv(c, D), D["y"])
+        probs = cv(c, D)
+        res, thr, rec, npass = evaluate(probs, D["y"])
+        _, _, rec3, npass3 = evaluate(probs, D["y"], floor=0.3)
         top1 = float(np.mean([res[w]["top1"] for w in WORDS]))
-        t = dict(name=name, cfg=c, mean_recall=rec, n_pass=npass, top1=top1,
+        t = dict(name=name, cfg=c, mean_recall=rec, n_pass=npass, top1=top1, mean_recall_f03=rec3, n_pass_f03=npass3,
                  recall={w: res[w]["recall"] for w in WORDS}, kept=False)
         trials.append(t)
-        print(f"{name:12s} recall {rec:.3f} pass {npass}/8 top1 {top1:.3f}  "
+        print(f"{name:12s} recall {rec:.3f} pass {npass}/8 top1 {top1:.3f} | floor0.3 {rec3:.3f} {npass3}/8  "
               + " ".join(f"{w}={res[w]['recall']:.2f}" for w in WORDS), flush=True)
         json.dump(trials, open(runs, "w"), indent=1)
         return t
@@ -359,7 +363,9 @@ def main():
                 t["kept"] = True
         json.dump(trials, open(runs, "w"), indent=1)
     print("chosen:", cfg, flush=True)
-    res, thr, rec, npass = evaluate(cv(cfg, D), D["y"])
+    probs = cv(cfg, D)
+    np.save(f"{FEATS}/words_oof_mlp{'_r2' if round2 else ''}.npy", probs)
+    res, thr, rec, npass = evaluate(probs, D["y"])
     cr = cross(cfg, D)
     for k, v in cr.items():
         print(f"cross {k}: top1 {v['top1']:.2f}", flush=True)
