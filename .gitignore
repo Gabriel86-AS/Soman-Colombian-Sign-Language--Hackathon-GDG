@@ -1,1 +1,48 @@
-.venv-demo/
+# ---------- Sistema operativo y editores ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+.idea/
+*.iml
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+.venv*/
+venv/
+.ipynb_checkpoints/
+.pytest_cache/
+
+# ---------- Datos (nunca se suben) ----------
+# Los datasets crudos se quedan en Colab; las tablas derivadas en Drive.
+DATASETS/
+ml/raw/
+ml/frames/
+ml/features/
+*.zip
+*.npz
+*.avi
+*.parquet
+
+# ---------- Modelos de MediaPipe (se descargan, ver ml/models/README.md) ----------
+ml/models/*.task
+
+# ---------- Fuente del logo (licencia sin confirmar) ----------
+soman/assets/fonts/RegularAesthetic.ttf
+
+# ---------- Secretos y llaves ----------
+.env
+.env.*
+*.keystore
+*.jks
+key.properties
+google-services.json
+local.properties
+
+# ---------- Flutter / Android (además de soman/.gitignore) ----------
+soman/build/
+soman/.dart_tool/
+soman/android/.gradle/
+*.apk
+*.aab
