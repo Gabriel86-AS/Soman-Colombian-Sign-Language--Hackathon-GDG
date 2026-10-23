@@ -44,9 +44,9 @@ def load():
     n, T = z["X"].shape[:2]
     S1 = z["X"][:, :, :40].reshape(n, T, 20, 2).astype(np.float64)
     S2 = z["X2"][:, :, :40].reshape(n, T, 20, 2).astype(np.float64)
-    LB, LN, LB2 = (z[k].astype(np.float64) for k in ("locB", "locN", "locB2"))
+    LB, LN, LB2, LN2 = (z[k].astype(np.float64) for k in ("locB", "locN", "locB2", "locN2"))
     ok = ~(np.isnan(S1).any((1, 2, 3)) | np.isnan(LB).any((1, 2)) | np.isnan(LN).any((1, 2))
-           | np.isnan(S2).any((1, 2, 3)) | np.isnan(LB2).any((1, 2)))
+           | np.isnan(S2).any((1, 2, 3)) | np.isnan(LB2).any((1, 2)) | np.isnan(LN2).any((1, 2)))
     lab = z["label"].astype(str)
     ds = z["dataset"].astype(str)
     signer = np.array([f"{d}_{s}" for d, s in zip(z["dataset"], z["signer"])])
@@ -54,9 +54,10 @@ def load():
     imp = (ds == "lsc50") & ~mvp
     keep = ok & (mvp | imp)
     y = np.where(mvp, lab, "other")[keep]
-    D = dict(S1=S1[keep], LB=LB[keep], LN=LN[keep], S2=S2[keep], LB2=LB2[keep], y=y,
+    D = dict(S1=S1[keep], LB=LB[keep], LN=LN[keep], S2=S2[keep], LB2=LB2[keep], LN2=LN2[keep], y=y,
              yi=np.array([CLASSES.index(c) for c in y]), g=signer[keep], ds=ds[keep], lab=lab[keep],
-             sid=z["sample_id"].astype(str)[keep])
+             sid=z["sample_id"].astype(str)[keep], dom=z["dom"].astype(float)[keep],
+             sec=z["sec"].astype(float)[keep])
     D["has2"] = np.abs(D["S2"]).sum((1, 2, 3)) > 0
     D["fold"] = folds(D["g"], D["ds"])
     return D
@@ -64,6 +65,32 @@ def load():
 
 def subset(D, idx):
     return {k: (v[idx] if isinstance(v, np.ndarray) and len(v) == len(D["y"]) else v) for k, v in D.items()}
+
+
+def cat(A, B):
+    n = len(A["y"])
+    return {k: (np.concatenate([v, B[k]]) if isinstance(v, np.ndarray) and len(v) == n else v) for k, v in A.items()}
+
+
+PAIRS = (("S1", "S2"), ("LB", "LB2"), ("LN", "LN2"), ("dom", "sec"))
+
+
+def swap(D, mask=None):
+    """Swap main <-> second hand for two-hand clips (where mask is True; default all two-hand clips)."""
+    m = D["has2"] if mask is None else (D["has2"] & mask)
+    out = dict(D)
+    for a, b in PAIRS:
+        sh = (-1,) + (1,) * (D[a].ndim - 1)
+        mm = m.reshape(sh)
+        out[a], out[b] = np.where(mm, D[b], D[a]), np.where(mm, D[a], D[b])
+    return out
+
+
+def prep(D, cfg):
+    """Hand order rule. canon: main = the hand that is higher on the body (lower mean locB y)."""
+    if cfg.get("canon"):
+        D = swap(D, D["LB2"][:, :, 1].mean(1) < D["LB"][:, :, 1].mean(1))
+    return D
 
 
 def resample_T(a, T):
@@ -86,6 +113,10 @@ def layout(cfg):
     lay = [("shape", 40), ("locB", 2), ("locN", 2)]
     lay += [("shape2", 40)] if s2 is True else [("shape2_tips", 10)] if s2 == "tips" else []
     lay += [("locB2", 2)]
+    if cfg.get("locN2"):
+        lay += [("locN2", 2)]
+    if cfg.get("hdist"):
+        lay += [("hrel", 2), ("hdist", 1)]
     if cfg.get("vel"):
         lay += [("dlocB", 2), ("dlocN", 2), ("dlocB2", 2)]
     return lay
@@ -95,8 +126,15 @@ def feats(D, cfg):
     """-> [n, T * sum(layout dims)] time-major."""
     n, T = len(D["S1"]), cfg["T"]
     blk = dict(shape=D["S1"].reshape(n, -1, 40), locB=D["LB"], locN=D["LN"], shape2=D["S2"].reshape(n, -1, 40),
-               shape2_tips=D["S2"][:, :, TIPS].reshape(n, -1, 10), locB2=D["LB2"])
+               shape2_tips=D["S2"][:, :, TIPS].reshape(n, -1, 10), locB2=D["LB2"], locN2=D["LN2"])
     blk = {k: resample_T(v, T) for k, v in blk.items()}
+    # second hand relative to the main hand, in the main hand's frame. Each locB is mirrored for a left hand
+    # (x negated around the shoulder midpoint); assuming the two hands have opposite handedness:
+    # rel = (-(x1 + x2), y2 - y1). Zeros when there is no second hand.
+    m2 = (np.abs(blk["locB2"]).sum((1, 2)) > 0)[:, None, None]
+    rel = np.stack([-(blk["locB"][..., 0] + blk["locB2"][..., 0]), blk["locB2"][..., 1] - blk["locB"][..., 1]], -1)
+    blk["hrel"] = rel * m2
+    blk["hdist"] = np.linalg.norm(rel, axis=-1, keepdims=True) * m2
     for k in ("locB", "locN", "locB2"):
         blk["d" + k] = np.concatenate([np.zeros((n, 1, 2)), np.diff(blk[k], axis=1)], 1)
     return np.concatenate([blk[k] for k, _ in layout(cfg)], 2).reshape(n, -1)
@@ -141,7 +179,7 @@ def augment(D, cfg, rng):
     """Per clip: in-plane rotation +-rot and aspect +-10% of each hand's shape (re-normalized to palm size via the
     mean distance wrist->middle MCP, which is point 9 -> index 8 here), body-position scale +-10% and shift
     +-loc_shift for each hand, optional joint time warp, jitter. A missing second hand stays all zeros."""
-    keys = ("S1", "LB", "LN", "S2", "LB2")
+    keys = ("S1", "LB", "LN", "S2", "LB2", "LN2")
     out = {k: [D[k]] for k in keys}
     n = len(D["S1"])
     m2 = D["has2"].astype(float)
@@ -159,10 +197,12 @@ def augment(D, cfg, rng):
         new["LN"] = D["LN"] * sc + sh + rng.normal(0, 0.02, D["LN"].shape)
         sh2 = rng.uniform(-cfg["loc_shift"], cfg["loc_shift"], (n, 1, 2))
         new["LB2"] = D["LB2"] * sc + sh2 + rng.normal(0, 0.02, D["LB2"].shape)
+        new["LN2"] = D["LN2"] * sc + sh2 + rng.normal(0, 0.02, D["LN2"].shape)
         if cfg["warp"]:
             new = dict(zip(keys, _warp([new[k] for k in keys], rng)))
         new["S2"] = new["S2"] * m2[:, None, None, None]
         new["LB2"] = new["LB2"] * m2[:, None, None]
+        new["LN2"] = new["LN2"] * m2[:, None, None]
         for k in keys:
             out[k].append(new[k])
     return {k: np.concatenate(v) for k, v in out.items()}
@@ -170,6 +210,9 @@ def augment(D, cfg, rng):
 
 # ---------------------------------------------------------------- model
 def fit(cfg, D, seed):
+    D = prep(D, cfg)
+    if cfg.get("swap"):  # both hand orders in training (two-hand clips added again, swapped)
+        D = cat(D, subset(swap(D), np.where(D["has2"])[0]))
     D = balance(D, cfg)
     A = augment(D, cfg, np.random.default_rng(seed)) if cfg["copies"] else D
     X = feats(A, cfg)
@@ -181,8 +224,22 @@ def fit(cfg, D, seed):
 
 
 def predict(members, D, cfg):
-    X = feats(D, cfg)
-    return np.mean([mb["m"].predict_proba(mb["sc"].transform(X)) for mb in members], 0)
+    D = prep(D, cfg)
+    views = [D, swap(D)] if cfg.get("swap") else [D]  # swap: average over both hand orders
+    return np.mean([mb["m"].predict_proba(mb["sc"].transform(feats(V, cfg))) for V in views for mb in members], 0)
+
+
+def hand_order_report(D):
+    """How often the two hands move about the same amount (then 'main = longest path' can flip between clips)."""
+    print("hand order: second/main path ratio per word (clips with 2 hands)", flush=True)
+    for w in WORDS:
+        m = (D["y"] == w) & D["has2"]
+        if not m.any():
+            continue
+        r = D["sec"][m] / np.maximum(D["dom"][m], 1e-9)
+        hi = D["LB2"][m][:, :, 1].mean(1) < D["LB"][m][:, :, 1].mean(1)
+        print(f"  {w:14s} n2={m.sum():3d} median {np.median(r):.2f}  ratio>0.7: {(r > 0.7).mean():.2f}  "
+              f"second hand higher: {hi.mean():.2f}", flush=True)
 
 
 def cv(cfg, D):
@@ -330,7 +387,10 @@ def main():
     if "--base" in sys.argv:
         base.update(json.loads(sys.argv[sys.argv.index("--base") + 1]))
     round2 = "--round2" in sys.argv
-    runs = RUNS.replace(".json", "_r2.json") if round2 else RUNS
+    round3 = "--round3" in sys.argv  # two-hand ideas; trials only, no export
+    runs = RUNS.replace(".json", "_r3.json" if round3 else "_r2.json") if (round2 or round3) else RUNS
+    if round3:
+        hand_order_report(D)
     trials, cfg = [], base
 
     def trial(name, c):
@@ -352,8 +412,16 @@ def main():
               ("alpha1e-2", dict(alpha=1e-2)), ("ensemble5", dict(seeds=5)))
     ROUND2 = (("vel", dict(vel=True)), ("shape2_tips", dict(shape2="tips")), ("balance", dict(balance=True)),
               ("loc_shift0.3", dict(loc_shift=0.3)), ("warp", dict(warp=True)), ("T15", dict(T=15)))
+    ROUND3 = (("locN2", dict(locN2=True)), ("hdist", dict(hdist=True)), ("canon", dict(canon=True)),
+              ("swap", dict(swap=True)), ("swap_shape2", dict(swap=True, shape2=True)),
+              ("canon_shape2", dict(canon=True, shape2=True)))
     best = trial("base", cfg)
     best["kept"] = True
+    if round3:
+        for name, change in ROUND3:
+            trial(name, {**cfg, **change})
+        print("round 3 done (no export)", flush=True)
+        return
     if "--quick" not in sys.argv:
         for name, change in (ROUND2 if round2 else ROUND1):
             t = trial(name, {**cfg, **change})
